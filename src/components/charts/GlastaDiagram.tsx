@@ -234,6 +234,7 @@ export function GlastaDiagram({
                 <ReferenceLine 
                   key={idx}
                   x={boundary.position}
+                  yAxisId="pressure"
                   stroke="hsl(var(--muted-foreground))"
                   strokeDasharray="5 5"
                   strokeWidth={1}
