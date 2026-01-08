@@ -10,10 +10,10 @@ import { Switch } from '@/components/ui/switch';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { 
   Plus, Trash2, GripVertical, Layers, 
-  ChevronDown, ChevronUp, Settings 
+  ChevronDown, ChevronUp, Settings, Edit2
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { calculateUValue, calculateLayerThermalResistance } from '@/utils/hygrothermalCalculations';
+import { calculateUValue, calculateLayerThermalResistance, calculateUValueWithoutBridging } from '@/utils/hygrothermalCalculations';
 
 interface ConstructionBuilderProps {
   construction: Construction;
@@ -35,8 +35,12 @@ export function ConstructionBuilder({ construction, onChange }: ConstructionBuil
   const [materialLibraryOpen, setMaterialLibraryOpen] = useState(false);
   const [expandedLayer, setExpandedLayer] = useState<string | null>(null);
   const [addingToIndex, setAddingToIndex] = useState<number | null>(null);
+  const [selectingBridgingForLayer, setSelectingBridgingForLayer] = useState<number | null>(null);
+  const [editingRsi, setEditingRsi] = useState(false);
+  const [editingRse, setEditingRse] = useState(false);
 
   const uValue = calculateUValue(construction);
+  const uValueNoBridging = calculateUValueWithoutBridging(construction);
 
   const addLayer = (material: Material) => {
     const newLayer: ConstructionLayer = {
@@ -54,6 +58,24 @@ export function ConstructionBuilder({ construction, onChange }: ConstructionBuil
 
     onChange({ ...construction, layers: newLayers });
     setAddingToIndex(null);
+  };
+
+  const updateBridgingMaterial = (layerIndex: number, material: Material) => {
+    const layer = construction.layers[layerIndex];
+    if (layer.bridging) {
+      updateLayer(layerIndex, {
+        bridging: { ...layer.bridging, material }
+      });
+    }
+    setSelectingBridgingForLayer(null);
+  };
+
+  const handleMaterialSelect = (material: Material) => {
+    if (selectingBridgingForLayer !== null) {
+      updateBridgingMaterial(selectingBridgingForLayer, material);
+    } else {
+      addLayer(material);
+    }
   };
 
   const updateLayer = (index: number, updates: Partial<ConstructionLayer>) => {
@@ -93,6 +115,17 @@ export function ConstructionBuilder({ construction, onChange }: ConstructionBuil
     }
   };
 
+  const updateSurfaceResistance = (type: 'internal' | 'external', value: string) => {
+    const numValue = parseFloat(value);
+    if (!isNaN(numValue) && numValue >= 0 && numValue <= 1) {
+      if (type === 'internal') {
+        onChange({ ...construction, internalSurfaceResistance: numValue });
+      } else {
+        onChange({ ...construction, externalSurfaceResistance: numValue });
+      }
+    }
+  };
+
   return (
     <div className="flex flex-col h-full">
       <div className="panel-header border-b border-border mb-4">
@@ -100,7 +133,7 @@ export function ConstructionBuilder({ construction, onChange }: ConstructionBuil
           <Layers className="w-4 h-4 text-primary" />
           <span className="panel-title">Construction Layers</span>
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex flex-col items-end gap-0.5">
           <div className="text-right">
             <span className="data-label">U-Value</span>
             <div className="font-mono text-lg text-primary">
@@ -108,13 +141,45 @@ export function ConstructionBuilder({ construction, onChange }: ConstructionBuil
               <span className="text-xs text-muted-foreground ml-1">W/m²K</span>
             </div>
           </div>
+          {uValue !== uValueNoBridging && (
+            <div className="text-xs text-muted-foreground">
+              Without bridging: {uValueNoBridging.toFixed(3)}
+            </div>
+          )}
         </div>
       </div>
 
-      {/* Internal Surface Label */}
-      <div className="flex items-center gap-2 px-2 py-1 text-xs text-muted-foreground">
+      {/* Internal Surface Rsi */}
+      <div className="flex items-center gap-2 px-2 py-2 text-xs">
         <div className="flex-1 h-px bg-border" />
-        <span>Internal Surface (Rsi = {construction.internalSurfaceResistance} m²K/W)</span>
+        <div className="flex items-center gap-2">
+          <span className="text-muted-foreground">Internal Surface</span>
+          {editingRsi ? (
+            <div className="flex items-center gap-1">
+              <span className="text-muted-foreground">Rsi =</span>
+              <Input
+                type="number"
+                step="0.01"
+                min="0"
+                max="1"
+                value={construction.internalSurfaceResistance}
+                onChange={(e) => updateSurfaceResistance('internal', e.target.value)}
+                className="w-20 h-6 text-xs"
+                onBlur={() => setEditingRsi(false)}
+                autoFocus
+              />
+              <span className="text-muted-foreground">m²K/W</span>
+            </div>
+          ) : (
+            <button
+              onClick={() => setEditingRsi(true)}
+              className="flex items-center gap-1 hover:text-primary transition-colors"
+            >
+              <span className="font-mono">(Rsi = {construction.internalSurfaceResistance} m²K/W)</span>
+              <Edit2 className="w-3 h-3" />
+            </button>
+          )}
+        </div>
         <div className="flex-1 h-px bg-border" />
       </div>
 
@@ -145,7 +210,7 @@ export function ConstructionBuilder({ construction, onChange }: ConstructionBuil
                       <span className="font-medium text-sm truncate">{layer.material.name}</span>
                       {layer.bridging && (
                         <span className="text-xs px-1.5 py-0.5 rounded bg-warning/20 text-warning">
-                          {layer.bridging.percentage}% bridged
+                          {layer.bridging.percentage}% {layer.bridging.material.name}
                         </span>
                       )}
                     </div>
@@ -188,11 +253,26 @@ export function ConstructionBuilder({ construction, onChange }: ConstructionBuil
                 {/* Expanded Details */}
                 {isExpanded && (
                   <div className="border-t border-border p-4 space-y-4 bg-secondary/20">
-                    {/* Thickness Slider */}
+                    {/* Thickness Slider + Input */}
                     <div className="space-y-2">
                       <div className="flex items-center justify-between">
                         <Label className="text-xs">Thickness</Label>
-                        <span className="font-mono text-sm">{layer.thickness} mm</span>
+                        <div className="flex items-center gap-2">
+                          <Input
+                            type="number"
+                            min="1"
+                            max="1000"
+                            value={layer.thickness}
+                            onChange={(e) => {
+                              const val = parseFloat(e.target.value);
+                              if (!isNaN(val) && val > 0 && val <= 1000) {
+                                updateLayer(index, { thickness: val });
+                              }
+                            }}
+                            className="w-20 h-7 text-sm font-mono"
+                          />
+                          <span className="text-sm text-muted-foreground">mm</span>
+                        </div>
                       </div>
                       <Slider
                         value={[layer.thickness]}
@@ -232,14 +312,20 @@ export function ConstructionBuilder({ construction, onChange }: ConstructionBuil
                     {layer.bridging && (
                       <div className="space-y-3 p-3 rounded-lg bg-card border border-border">
                         <div className="flex items-center justify-between">
-                          <span className="text-sm font-medium">
-                            {layer.bridging.material.name}
-                          </span>
+                          <div>
+                            <span className="text-sm font-medium">
+                              {layer.bridging.material.name}
+                            </span>
+                            <div className="text-xs text-muted-foreground mt-0.5">
+                              λ = {layer.bridging.material.thermalConductivity} W/mK
+                            </div>
+                          </div>
                           <Button
                             variant="outline"
                             size="sm"
-                            onClick={() => {
-                              setAddingToIndex(index);
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setSelectingBridgingForLayer(index);
                               setMaterialLibraryOpen(true);
                             }}
                           >
@@ -250,7 +336,24 @@ export function ConstructionBuilder({ construction, onChange }: ConstructionBuil
                         <div className="space-y-2">
                           <div className="flex items-center justify-between">
                             <Label className="text-xs">Bridging Percentage</Label>
-                            <span className="font-mono text-sm">{layer.bridging.percentage}%</span>
+                            <div className="flex items-center gap-2">
+                              <Input
+                                type="number"
+                                min="1"
+                                max="50"
+                                value={layer.bridging.percentage}
+                                onChange={(e) => {
+                                  const val = parseFloat(e.target.value);
+                                  if (!isNaN(val) && val >= 1 && val <= 50) {
+                                    updateLayer(index, {
+                                      bridging: { ...layer.bridging!, percentage: val }
+                                    });
+                                  }
+                                }}
+                                className="w-16 h-6 text-xs font-mono"
+                              />
+                              <span className="text-xs text-muted-foreground">%</span>
+                            </div>
                           </div>
                           <Slider
                             value={[layer.bridging.percentage]}
@@ -276,6 +379,7 @@ export function ConstructionBuilder({ construction, onChange }: ConstructionBuil
             className="w-full h-12 border-dashed border-2 hover:border-primary hover:bg-primary/5"
             onClick={() => {
               setAddingToIndex(null);
+              setSelectingBridgingForLayer(null);
               setMaterialLibraryOpen(true);
             }}
           >
@@ -285,17 +389,48 @@ export function ConstructionBuilder({ construction, onChange }: ConstructionBuil
         </div>
       </ScrollArea>
 
-      {/* External Surface Label */}
-      <div className="flex items-center gap-2 px-2 py-1 text-xs text-muted-foreground mt-2">
+      {/* External Surface Rse */}
+      <div className="flex items-center gap-2 px-2 py-2 text-xs mt-2">
         <div className="flex-1 h-px bg-border" />
-        <span>External Surface (Rse = {construction.externalSurfaceResistance} m²K/W)</span>
+        <div className="flex items-center gap-2">
+          <span className="text-muted-foreground">External Surface</span>
+          {editingRse ? (
+            <div className="flex items-center gap-1">
+              <span className="text-muted-foreground">Rse =</span>
+              <Input
+                type="number"
+                step="0.01"
+                min="0"
+                max="1"
+                value={construction.externalSurfaceResistance}
+                onChange={(e) => updateSurfaceResistance('external', e.target.value)}
+                className="w-20 h-6 text-xs"
+                onBlur={() => setEditingRse(false)}
+                autoFocus
+              />
+              <span className="text-muted-foreground">m²K/W</span>
+            </div>
+          ) : (
+            <button
+              onClick={() => setEditingRse(true)}
+              className="flex items-center gap-1 hover:text-primary transition-colors"
+            >
+              <span className="font-mono">(Rse = {construction.externalSurfaceResistance} m²K/W)</span>
+              <Edit2 className="w-3 h-3" />
+            </button>
+          )}
+        </div>
         <div className="flex-1 h-px bg-border" />
       </div>
 
       <MaterialLibrary
         open={materialLibraryOpen}
-        onClose={() => setMaterialLibraryOpen(false)}
-        onSelect={addLayer}
+        onClose={() => {
+          setMaterialLibraryOpen(false);
+          setSelectingBridgingForLayer(null);
+        }}
+        onSelect={handleMaterialSelect}
+        mode={selectingBridgingForLayer !== null ? 'bridging' : 'layer'}
       />
     </div>
   );

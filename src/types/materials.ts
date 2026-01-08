@@ -7,6 +7,8 @@ export interface Material {
   density: number; // kg/m³
   specificHeat: number; // J/(kg·K)
   description?: string;
+  thermalResistance?: number; // For air gaps with fixed R-value
+  isCustom?: boolean;
 }
 
 export type MaterialCategory = 
@@ -19,6 +21,9 @@ export type MaterialCategory =
   | 'render'
   | 'cladding'
   | 'concrete'
+  | 'airgap'
+  | 'flooring'
+  | 'glazing'
   | 'custom';
 
 export interface ConstructionLayer {
@@ -88,6 +93,7 @@ export interface CondensationResult {
 export interface AnalysisResult {
   construction: Construction;
   uValue: number; // W/(m²·K)
+  uValueWithoutBridging?: number; // W/(m²·K) - U-value ignoring thermal bridges
   psiValue?: number;
   temperatureGradient: { position: number; temperature: number }[];
   vapourPressureGradient: { position: number; pressure: number; saturation: number }[];
@@ -96,6 +102,8 @@ export interface AnalysisResult {
   monthlyData: MonthlyAnalysis[];
   overallResult: 'pass' | 'fail';
   failureReason?: string;
+  // Surface condensation data per month
+  surfaceCondensationData?: SurfaceCondensationMonth[];
 }
 
 export interface MonthlyAnalysis {
@@ -104,4 +112,15 @@ export interface MonthlyAnalysis {
   evaporationAmount: number; // g/m²
   netAccumulation: number; // g/m²
   cumulativeAccumulation: number; // g/m²
+}
+
+export interface SurfaceCondensationMonth {
+  month: string;
+  externalTemp: number;
+  externalRH: number;
+  internalTemp: number;
+  internalRH: number;
+  minTempFactor: number;
+  minTsi: number;
+  tsi: number;
 }

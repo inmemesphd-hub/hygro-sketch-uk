@@ -1,9 +1,9 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Construction, ConstructionLayer, ClimateData, AnalysisResult } from '@/types/materials';
 import { ukMaterialDatabase } from '@/data/ukMaterials';
 import { ukMonthlyClimateData } from '@/data/ukClimate';
-import { performCondensationAnalysis } from '@/utils/hygrothermalCalculations';
+import { performCondensationAnalysis, calculateUValue, calculateUValueWithoutBridging } from '@/utils/hygrothermalCalculations';
 import { ConstructionBuilder } from '@/components/ConstructionBuilder';
 import { ClimateInput } from '@/components/ClimateInput';
 import { JunctionCanvas } from '@/components/JunctionCanvas';
@@ -13,10 +13,11 @@ import { ResultsSummary } from '@/components/ResultsSummary';
 import { Button } from '@/components/ui/button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { ScrollArea } from '@/components/ui/scroll-area';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { 
   Layers, BarChart3, FileText, Settings, 
   Play, Building2, Thermometer, Droplets,
-  ChevronRight, Menu, X
+  ChevronRight, Menu, X, FileDown, FileType
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import jsPDF from 'jspdf';
@@ -70,6 +71,9 @@ export default function AnalysisWorkspace() {
   const [activeTab, setActiveTab] = useState('construction');
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
+  const [exportFormat, setExportFormat] = useState<'pdf' | 'word'>('pdf');
+  
+  const glastaDiagramRef = useRef<HTMLDivElement>(null);
 
   const runAnalysis = () => {
     setIsAnalyzing(true);
@@ -83,71 +87,464 @@ export default function AnalysisWorkspace() {
     }, 800);
   };
 
-  const exportPDF = async () => {
+  const exportReport = async () => {
     if (!analysisResult) return;
 
+    if (exportFormat === 'pdf') {
+      await exportPDF();
+    } else {
+      await exportWord();
+    }
+  };
+
+  const exportPDF = async () => {
     const pdf = new jsPDF('p', 'mm', 'a4');
     const pageWidth = pdf.internal.pageSize.getWidth();
+    const pageHeight = pdf.internal.pageSize.getHeight();
     const margin = 15;
+    const contentWidth = pageWidth - (margin * 2);
     
-    // Title
-    pdf.setFontSize(20);
-    pdf.setTextColor(30, 41, 59);
-    pdf.text('Condensation Risk Analysis Report', margin, 25);
-    
-    // Subtitle
-    pdf.setFontSize(10);
-    pdf.setTextColor(100, 116, 139);
-    pdf.text(`Generated: ${new Date().toLocaleDateString('en-GB')} | BS EN ISO 13788 Compliance`, margin, 32);
-    
-    // Result badge
-    pdf.setFontSize(12);
-    if (analysisResult.overallResult === 'pass') {
-      pdf.setTextColor(22, 163, 74);
-      pdf.text('✓ COMPLIANT', pageWidth - margin - 30, 25);
-    } else {
-      pdf.setTextColor(220, 38, 38);
-      pdf.text('✗ NON-COMPLIANT', pageWidth - margin - 35, 25);
-    }
+    // Approved Document C color scheme
+    const colors = {
+      primary: [0, 102, 153] as [number, number, number], // Teal blue
+      success: [0, 128, 0] as [number, number, number],
+      fail: [220, 53, 69] as [number, number, number],
+      header: [43, 57, 72] as [number, number, number],
+      text: [51, 51, 51] as [number, number, number],
+      muted: [119, 119, 119] as [number, number, number],
+      border: [200, 200, 200] as [number, number, number],
+      lightBg: [245, 247, 250] as [number, number, number],
+    };
 
-    // Construction summary
-    let y = 45;
+    // ==================== COVER PAGE ====================
+    // Header bar
+    pdf.setFillColor(...colors.primary);
+    pdf.rect(0, 0, pageWidth, 35, 'F');
+    
+    pdf.setTextColor(255, 255, 255);
+    pdf.setFontSize(24);
+    pdf.setFont('helvetica', 'bold');
+    pdf.text('Condensation Risk Analysis', margin, 23);
+    
+    pdf.setFontSize(10);
+    pdf.setFont('helvetica', 'normal');
+    pdf.text('BS EN ISO 13788 Compliant Report', margin, 30);
+    
+    // Status badge
+    let y = 55;
+    const isPass = analysisResult!.overallResult === 'pass';
+    pdf.setFillColor(...(isPass ? colors.success : colors.fail));
+    pdf.roundedRect(margin, y - 10, 50, 16, 2, 2, 'F');
+    pdf.setTextColor(255, 255, 255);
+    pdf.setFontSize(12);
+    pdf.setFont('helvetica', 'bold');
+    pdf.text(isPass ? 'PASS' : 'FAIL', margin + 25, y, { align: 'center' });
+    
+    pdf.setTextColor(...colors.text);
     pdf.setFontSize(11);
-    pdf.setTextColor(30, 41, 59);
-    pdf.text('Construction Summary', margin, y);
+    pdf.setFont('helvetica', 'normal');
+    pdf.text(isPass ? 'Structure is free of condensation.' : (analysisResult!.failureReason || 'Structure fails condensation criteria.'), margin + 55, y);
+    
+    // Summary info
+    y = 85;
+    pdf.setFillColor(...colors.lightBg);
+    pdf.roundedRect(margin, y - 5, contentWidth, 35, 3, 3, 'F');
+    
+    pdf.setFontSize(9);
+    pdf.setTextColor(...colors.muted);
+    pdf.text('Calculation Method:', margin + 5, y + 5);
+    pdf.text('Internal Conditions:', margin + 5, y + 12);
+    pdf.text('External Conditions:', margin + 5, y + 19);
+    pdf.text('Generated:', margin + 5, y + 26);
+    
+    pdf.setTextColor(...colors.text);
+    pdf.setFont('helvetica', 'bold');
+    pdf.text('ISO 13788 (Glaser Method)', margin + 45, y + 5);
+    pdf.text('ISO 13788 Annex C - Normal Occupancy', margin + 45, y + 12);
+    pdf.text('BS5250 Climate Data', margin + 45, y + 19);
+    pdf.text(new Date().toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' }), margin + 45, y + 26);
+    
+    // ==================== CONSTRUCTION DETAILS ====================
+    y = 135;
+    pdf.setFont('helvetica', 'bold');
+    pdf.setFontSize(14);
+    pdf.setTextColor(...colors.header);
+    pdf.text('Construction Details', margin, y);
+    
+    y += 10;
+    
+    // Draw construction cross-section
+    const sectionHeight = 60;
+    const sectionY = y;
+    let sectionX = margin;
+    const totalThickness = construction.layers.reduce((sum, l) => sum + l.thickness, 0);
+    const scale = contentWidth / totalThickness;
+    
+    // Material patterns and colors
+    const getMaterialPattern = (category: string): { color: [number, number, number]; pattern: string } => {
+      switch (category) {
+        case 'masonry':
+          return { color: [205, 92, 92], pattern: 'brick' };
+        case 'insulation':
+          return { color: [255, 223, 186], pattern: 'dots' };
+        case 'concrete':
+          return { color: [169, 169, 169], pattern: 'solid' };
+        case 'timber':
+          return { color: [210, 180, 140], pattern: 'wood' };
+        case 'membrane':
+          return { color: [100, 149, 237], pattern: 'lines' };
+        case 'plasterboard':
+          return { color: [245, 245, 220], pattern: 'solid' };
+        case 'metal':
+          return { color: [192, 192, 192], pattern: 'metallic' };
+        case 'airgap':
+          return { color: [240, 248, 255], pattern: 'air' };
+        default:
+          return { color: [200, 200, 200], pattern: 'solid' };
+      }
+    };
+    
+    for (const layer of construction.layers) {
+      const layerWidth = layer.thickness * scale;
+      const { color, pattern } = getMaterialPattern(layer.material.category);
+      
+      pdf.setFillColor(...color);
+      pdf.rect(sectionX, sectionY, layerWidth, sectionHeight, 'F');
+      
+      // Add patterns
+      pdf.setDrawColor(100, 100, 100);
+      pdf.setLineWidth(0.1);
+      
+      if (pattern === 'brick') {
+        // Brick pattern
+        for (let py = sectionY; py < sectionY + sectionHeight; py += 6) {
+          pdf.line(sectionX, py, sectionX + layerWidth, py);
+          const offset = (Math.floor((py - sectionY) / 6) % 2) * (layerWidth / 3);
+          for (let px = sectionX + offset; px < sectionX + layerWidth; px += (layerWidth / 3)) {
+            pdf.line(px, py, px, py + 6);
+          }
+        }
+      } else if (pattern === 'dots') {
+        // Insulation dots
+        for (let py = sectionY + 3; py < sectionY + sectionHeight; py += 6) {
+          for (let px = sectionX + 3; px < sectionX + layerWidth; px += 6) {
+            pdf.circle(px, py, 0.5, 'F');
+          }
+        }
+      } else if (pattern === 'wood') {
+        // Wood grain
+        for (let py = sectionY + 4; py < sectionY + sectionHeight; py += 8) {
+          pdf.setDrawColor(139, 90, 43);
+          const curve = Math.sin(py * 0.1) * 2;
+          pdf.line(sectionX, py + curve, sectionX + layerWidth, py + curve);
+        }
+      }
+      
+      // Bridging indication
+      if (layer.bridging) {
+        pdf.setFillColor(100, 100, 100);
+        const studWidth = layerWidth * 0.1;
+        const studSpacing = layerWidth / 3;
+        for (let sx = sectionX + studSpacing; sx < sectionX + layerWidth - studWidth; sx += studSpacing) {
+          pdf.rect(sx, sectionY, studWidth, sectionHeight, 'F');
+        }
+      }
+      
+      // Border
+      pdf.setDrawColor(...colors.border);
+      pdf.setLineWidth(0.3);
+      pdf.rect(sectionX, sectionY, layerWidth, sectionHeight);
+      
+      sectionX += layerWidth;
+    }
+    
+    // Layer labels
+    y = sectionY + sectionHeight + 15;
+    
+    // Construction table
+    pdf.setFillColor(...colors.primary);
+    pdf.rect(margin, y, contentWidth, 8, 'F');
+    pdf.setTextColor(255, 255, 255);
+    pdf.setFontSize(8);
+    pdf.setFont('helvetica', 'bold');
+    pdf.text('Layer', margin + 2, y + 5.5);
+    pdf.text('Material', margin + 20, y + 5.5);
+    pdf.text('Thickness (mm)', margin + 90, y + 5.5);
+    pdf.text('λ (W/mK)', margin + 120, y + 5.5);
+    pdf.text('μ (MNs/gm)', margin + 145, y + 5.5);
     
     y += 8;
-    pdf.setFontSize(9);
-    pdf.setTextColor(71, 85, 105);
+    pdf.setFont('helvetica', 'normal');
+    pdf.setTextColor(...colors.text);
     
     construction.layers.forEach((layer, i) => {
-      const text = `${i + 1}. ${layer.material.name} - ${layer.thickness}mm (λ=${layer.material.thermalConductivity} W/mK)`;
-      pdf.text(text, margin + 5, y);
-      y += 5;
+      const rowColor = i % 2 === 0 ? [255, 255, 255] : colors.lightBg;
+      pdf.setFillColor(...(rowColor as [number, number, number]));
+      pdf.rect(margin, y, contentWidth, 7, 'F');
+      
+      pdf.setFontSize(8);
+      pdf.text(`${i + 1}`, margin + 2, y + 5);
+      let materialName = layer.material.name;
+      if (layer.bridging) {
+        materialName += ` (${layer.bridging.percentage}% ${layer.bridging.material.name})`;
+      }
+      pdf.text(materialName.substring(0, 40), margin + 20, y + 5);
+      pdf.text(layer.thickness.toString(), margin + 90, y + 5);
+      pdf.text(layer.material.thermalConductivity.toString(), margin + 120, y + 5);
+      pdf.text(layer.material.vapourResistivity.toString(), margin + 145, y + 5);
+      
+      y += 7;
     });
-
-    // Key metrics
-    y += 10;
-    pdf.setFontSize(11);
-    pdf.setTextColor(30, 41, 59);
-    pdf.text('Key Results', margin, y);
+    
+    // U-value summary
+    y += 5;
+    pdf.setFillColor(...colors.lightBg);
+    pdf.roundedRect(margin, y, contentWidth, 20, 2, 2, 'F');
+    
+    pdf.setFont('helvetica', 'bold');
+    pdf.setFontSize(10);
+    pdf.text('U-Value (with bridging):', margin + 5, y + 8);
+    pdf.setTextColor(...colors.primary);
+    pdf.text(`${analysisResult!.uValue.toFixed(3)} W/m²K`, margin + 55, y + 8);
+    
+    pdf.setTextColor(...colors.text);
+    pdf.text('U-Value (without bridging):', margin + 5, y + 16);
+    pdf.setTextColor(...colors.muted);
+    pdf.text(`${(analysisResult!.uValueWithoutBridging || analysisResult!.uValue).toFixed(3)} W/m²K`, margin + 60, y + 16);
+    
+    // ==================== NEW PAGE - RESULTS ====================
+    pdf.addPage();
+    
+    // Header
+    pdf.setFillColor(...colors.primary);
+    pdf.rect(0, 0, pageWidth, 15, 'F');
+    pdf.setTextColor(255, 255, 255);
+    pdf.setFontSize(12);
+    pdf.setFont('helvetica', 'bold');
+    pdf.text('Detailed Results: Surface Condensation', margin, 10);
+    
+    y = 25;
+    
+    // Surface condensation table (like the reference image)
+    pdf.setFillColor(...colors.primary);
+    pdf.rect(margin, y, contentWidth, 8, 'F');
+    pdf.setTextColor(255, 255, 255);
+    pdf.setFontSize(7);
+    pdf.setFont('helvetica', 'bold');
+    
+    const cols = ['Month', 'Ext Temp', 'Ext RH (%)', 'Int Temp', 'Int RH (%)', 'Min Temp Factor', 'Min Tsi', 'Tsi'];
+    const colWidths = [20, 20, 22, 20, 22, 28, 22, 22];
+    let colX = margin;
+    cols.forEach((col, i) => {
+      pdf.text(col, colX + 2, y + 5.5);
+      colX += colWidths[i];
+    });
     
     y += 8;
-    pdf.setFontSize(9);
-    pdf.setTextColor(71, 85, 105);
-    pdf.text(`U-Value: ${analysisResult.uValue} W/m²K`, margin + 5, y);
-    y += 5;
-    pdf.text(`Peak Accumulation: ${Math.max(...analysisResult.monthlyData.map(d => d.cumulativeAccumulation)).toFixed(0)} g/m²`, margin + 5, y);
-    y += 5;
-    pdf.text(`Year-End Retained: ${analysisResult.monthlyData[11]?.cumulativeAccumulation.toFixed(0) || 0} g/m²`, margin + 5, y);
-
-    // Standards reference
-    y += 15;
+    pdf.setFont('helvetica', 'normal');
+    pdf.setTextColor(...colors.text);
+    
+    const surfaceData = analysisResult!.surfaceCondensationData || [];
+    climateData.forEach((month, i) => {
+      const rowColor = i % 2 === 0 ? [255, 255, 255] : colors.lightBg;
+      pdf.setFillColor(...(rowColor as [number, number, number]));
+      pdf.rect(margin, y, contentWidth, 6, 'F');
+      
+      const sd = surfaceData[i];
+      colX = margin;
+      pdf.setFontSize(7);
+      pdf.text(month.month.substring(0, 3), colX + 2, y + 4.5);
+      colX += colWidths[0];
+      pdf.text(month.externalTemp.toFixed(1), colX + 2, y + 4.5);
+      colX += colWidths[1];
+      pdf.text(month.externalRH.toString(), colX + 2, y + 4.5);
+      colX += colWidths[2];
+      pdf.text(month.internalTemp.toFixed(1), colX + 2, y + 4.5);
+      colX += colWidths[3];
+      pdf.text(month.internalRH.toString(), colX + 2, y + 4.5);
+      colX += colWidths[4];
+      pdf.text(sd?.minTempFactor.toFixed(3) || '-', colX + 2, y + 4.5);
+      colX += colWidths[5];
+      pdf.text(sd?.minTsi.toFixed(1) || '-', colX + 2, y + 4.5);
+      colX += colWidths[6];
+      pdf.text(sd?.tsi.toFixed(1) || '-', colX + 2, y + 4.5);
+      
+      y += 6;
+    });
+    
+    // Monthly accumulation summary
+    y += 10;
+    pdf.setFont('helvetica', 'bold');
+    pdf.setFontSize(12);
+    pdf.setTextColor(...colors.header);
+    pdf.text('Monthly Moisture Accumulation', margin, y);
+    
+    y += 8;
+    pdf.setFillColor(...colors.primary);
+    pdf.rect(margin, y, contentWidth, 8, 'F');
+    pdf.setTextColor(255, 255, 255);
+    pdf.setFontSize(7);
+    pdf.text('Month', margin + 2, y + 5.5);
+    pdf.text('Condensation (g/m²)', margin + 30, y + 5.5);
+    pdf.text('Evaporation (g/m²)', margin + 70, y + 5.5);
+    pdf.text('Net (g/m²)', margin + 110, y + 5.5);
+    pdf.text('Cumulative (g/m²)', margin + 140, y + 5.5);
+    
+    y += 8;
+    pdf.setFont('helvetica', 'normal');
+    
+    analysisResult!.monthlyData.forEach((data, i) => {
+      const rowColor = i % 2 === 0 ? [255, 255, 255] : colors.lightBg;
+      pdf.setFillColor(...(rowColor as [number, number, number]));
+      pdf.rect(margin, y, contentWidth, 6, 'F');
+      
+      pdf.setTextColor(...colors.text);
+      pdf.setFontSize(7);
+      pdf.text(data.month.substring(0, 3), margin + 2, y + 4.5);
+      pdf.text(data.condensationAmount.toFixed(1), margin + 30, y + 4.5);
+      pdf.text(data.evaporationAmount.toFixed(1), margin + 70, y + 4.5);
+      
+      const netColor = data.netAccumulation > 0 ? colors.fail : colors.success;
+      pdf.setTextColor(...netColor);
+      pdf.text(data.netAccumulation.toFixed(1), margin + 110, y + 4.5);
+      
+      pdf.setTextColor(...colors.text);
+      pdf.text(data.cumulativeAccumulation.toFixed(1), margin + 140, y + 4.5);
+      
+      y += 6;
+    });
+    
+    // ==================== NEW PAGE - GLASTA DIAGRAM ====================
+    pdf.addPage();
+    
+    // Header
+    pdf.setFillColor(...colors.primary);
+    pdf.rect(0, 0, pageWidth, 15, 'F');
+    pdf.setTextColor(255, 255, 255);
+    pdf.setFontSize(12);
+    pdf.setFont('helvetica', 'bold');
+    pdf.text('Glaser Diagram', margin, 10);
+    
+    // Capture the Glasta diagram
+    if (glastaDiagramRef.current) {
+      try {
+        const canvas = await html2canvas(glastaDiagramRef.current, {
+          scale: 2,
+          backgroundColor: '#ffffff',
+        });
+        const imgData = canvas.toDataURL('image/png');
+        pdf.addImage(imgData, 'PNG', margin, 25, contentWidth, contentWidth * 0.6);
+      } catch (e) {
+        console.error('Failed to capture Glasta diagram', e);
+      }
+    }
+    
+    // Standards reference at bottom
     pdf.setFontSize(8);
-    pdf.setTextColor(100, 116, 139);
-    pdf.text('Analysis performed in accordance with BS EN ISO 13788, BS EN 15026, and Approved Document C.', margin, y);
+    pdf.setTextColor(...colors.muted);
+    pdf.text(
+      'Analysis performed in accordance with BS EN ISO 13788, BS EN 15026, and Approved Document C of the UK Building Regulations.',
+      margin,
+      pageHeight - 10
+    );
     
     pdf.save('condensation-analysis-report.pdf');
+  };
+
+  const exportWord = async () => {
+    // Generate HTML content for Word document
+    const isPass = analysisResult!.overallResult === 'pass';
+    
+    const htmlContent = `
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <meta charset="utf-8">
+        <style>
+          body { font-family: Arial, sans-serif; font-size: 11pt; color: #333; max-width: 800px; margin: 0 auto; }
+          h1 { color: #006699; border-bottom: 2px solid #006699; padding-bottom: 10px; }
+          h2 { color: #2b3948; margin-top: 30px; }
+          table { border-collapse: collapse; width: 100%; margin: 15px 0; }
+          th { background-color: #006699; color: white; padding: 8px; text-align: left; }
+          td { border: 1px solid #ddd; padding: 8px; }
+          tr:nth-child(even) { background-color: #f5f7fa; }
+          .pass { color: #008000; font-weight: bold; }
+          .fail { color: #dc3545; font-weight: bold; }
+          .summary-box { background-color: #f5f7fa; padding: 15px; border-radius: 5px; margin: 20px 0; }
+          .footer { font-size: 9pt; color: #777; margin-top: 40px; border-top: 1px solid #ddd; padding-top: 10px; }
+        </style>
+      </head>
+      <body>
+        <h1>Condensation Risk Analysis Report</h1>
+        
+        <div class="summary-box">
+          <p><strong>Status:</strong> <span class="${isPass ? 'pass' : 'fail'}">${isPass ? 'PASS' : 'FAIL'}</span></p>
+          <p><strong>Summary:</strong> ${isPass ? 'Structure is free of condensation.' : analysisResult!.failureReason}</p>
+          <p><strong>Calculation Method:</strong> ISO 13788 (Glaser Method)</p>
+          <p><strong>Generated:</strong> ${new Date().toLocaleDateString('en-GB')}</p>
+        </div>
+        
+        <h2>Construction Details</h2>
+        <table>
+          <tr>
+            <th>Layer</th>
+            <th>Material</th>
+            <th>Thickness (mm)</th>
+            <th>λ (W/mK)</th>
+            <th>μ (MNs/gm)</th>
+          </tr>
+          ${construction.layers.map((layer, i) => `
+            <tr>
+              <td>${i + 1}</td>
+              <td>${layer.material.name}${layer.bridging ? ` (${layer.bridging.percentage}% ${layer.bridging.material.name})` : ''}</td>
+              <td>${layer.thickness}</td>
+              <td>${layer.material.thermalConductivity}</td>
+              <td>${layer.material.vapourResistivity}</td>
+            </tr>
+          `).join('')}
+        </table>
+        
+        <div class="summary-box">
+          <p><strong>U-Value (with bridging):</strong> ${analysisResult!.uValue.toFixed(3)} W/m²K</p>
+          <p><strong>U-Value (without bridging):</strong> ${(analysisResult!.uValueWithoutBridging || analysisResult!.uValue).toFixed(3)} W/m²K</p>
+        </div>
+        
+        <h2>Monthly Results</h2>
+        <table>
+          <tr>
+            <th>Month</th>
+            <th>Ext Temp (°C)</th>
+            <th>Ext RH (%)</th>
+            <th>Int Temp (°C)</th>
+            <th>Int RH (%)</th>
+            <th>Cumulative (g/m²)</th>
+          </tr>
+          ${climateData.map((month, i) => `
+            <tr>
+              <td>${month.month}</td>
+              <td>${month.externalTemp}</td>
+              <td>${month.externalRH}</td>
+              <td>${month.internalTemp}</td>
+              <td>${month.internalRH}</td>
+              <td>${analysisResult!.monthlyData[i]?.cumulativeAccumulation.toFixed(1) || 0}</td>
+            </tr>
+          `).join('')}
+        </table>
+        
+        <div class="footer">
+          <p>Analysis performed in accordance with BS EN ISO 13788, BS EN 15026, and Approved Document C of the UK Building Regulations.</p>
+        </div>
+      </body>
+      </html>
+    `;
+    
+    const blob = new Blob([htmlContent], { type: 'application/msword' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = 'condensation-analysis-report.doc';
+    link.click();
+    URL.revokeObjectURL(url);
   };
 
   return (
@@ -280,16 +677,36 @@ export default function AnalysisWorkspace() {
                           <div className="text-xs text-muted-foreground mt-1">
                             U-Value: {analysisResult.uValue} W/m²K
                           </div>
+                          {analysisResult.uValueWithoutBridging && analysisResult.uValueWithoutBridging !== analysisResult.uValue && (
+                            <div className="text-xs text-muted-foreground">
+                              Without bridging: {analysisResult.uValueWithoutBridging} W/m²K
+                            </div>
+                          )}
                         </div>
 
-                        <Button 
-                          variant="outline" 
-                          className="w-full"
-                          onClick={exportPDF}
-                        >
-                          <FileText className="w-4 h-4 mr-2" />
-                          Export PDF Report
-                        </Button>
+                        <div className="flex items-center gap-2">
+                          <Select value={exportFormat} onValueChange={(v) => setExportFormat(v as 'pdf' | 'word')}>
+                            <SelectTrigger className="w-24">
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="pdf">PDF</SelectItem>
+                              <SelectItem value="word">Word</SelectItem>
+                            </SelectContent>
+                          </Select>
+                          <Button 
+                            variant="outline" 
+                            className="flex-1"
+                            onClick={exportReport}
+                          >
+                            {exportFormat === 'pdf' ? (
+                              <FileDown className="w-4 h-4 mr-2" />
+                            ) : (
+                              <FileType className="w-4 h-4 mr-2" />
+                            )}
+                            Export {exportFormat.toUpperCase()} Report
+                          </Button>
+                        </div>
                       </div>
                     )}
                   </TabsContent>
@@ -313,18 +730,20 @@ export default function AnalysisWorkspace() {
               <motion.div
                 initial={{ opacity: 0, y: 20 }}
                 animate={{ opacity: 1, y: 0 }}
-                className="flex-1 grid grid-cols-1 lg:grid-cols-2 gap-4 min-h-0"
+                className="flex-1 grid grid-cols-1 lg:grid-cols-2 gap-4"
               >
-                <div className="space-y-4 overflow-auto">
-                  <GlastaDiagram result={analysisResult} />
+                <div className="space-y-4">
+                  <div ref={glastaDiagramRef}>
+                    <GlastaDiagram result={analysisResult} />
+                  </div>
                   <TemperatureProfile result={analysisResult} />
                 </div>
                 
-                <div className="space-y-4 overflow-auto">
+                <div className="space-y-4">
                   <MonthlyAccumulationChart monthlyData={analysisResult.monthlyData} />
                   <ResultsSummary 
                     result={analysisResult}
-                    onExportPDF={exportPDF}
+                    onExportPDF={exportReport}
                   />
                 </div>
               </motion.div>
