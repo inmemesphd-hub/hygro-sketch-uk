@@ -2,6 +2,7 @@ import { Construction, ConstructionLayer, ClimateData, AnalysisResult, MonthlyAn
 
 // Constants
 const GAS_CONSTANT = 461.5; // J/(kg·K) for water vapour
+const SOIL_THERMAL_CONDUCTIVITY = 1.5; // W/(m·K) for clay soil (BS EN ISO 13370)
 
 /**
  * Calculate saturation vapour pressure using Magnus formula
@@ -104,6 +105,78 @@ export function calculateUValueWithoutBridging(construction: Construction): numb
   }
 
   return 1 / totalR;
+}
+
+/**
+ * Calculate ground floor U-value using BS EN ISO 13370 methodology
+ * @param construction - The floor construction
+ * @param perimeter - Exposed perimeter in meters
+ * @param area - Floor area in m²
+ * @param floorType - Type of ground floor (solid, suspended)
+ * @returns Adjusted U-value accounting for ground heat transfer
+ */
+export function calculateGroundFloorUValue(
+  construction: Construction,
+  perimeter: number,
+  area: number,
+  floorType: 'ground' | 'suspended' | 'solid' | 'intermediate' = 'ground'
+): number {
+  // For intermediate floors, just use standard calculation
+  if (floorType === 'intermediate') {
+    return calculateUValue(construction);
+  }
+
+  // P/A ratio
+  const pARatio = perimeter / area;
+  
+  // Characteristic dimension B' = A / (0.5 × P) = 2A/P
+  const bPrime = (2 * area) / perimeter;
+  
+  // Calculate total thermal resistance of floor construction (excluding surface resistances for ground calc)
+  let Rf = 0;
+  for (const layer of construction.layers) {
+    Rf += calculateLayerThermalResistance(layer);
+  }
+  
+  // Equivalent thickness d_t = w + λ(Rsi + Rf + Rse)
+  // where w is wall thickness (assumed 0.3m) and λ is soil conductivity
+  const w = 0.3; // Assumed perimeter wall thickness
+  const dt = w + SOIL_THERMAL_CONDUCTIVITY * (construction.internalSurfaceResistance + Rf + construction.externalSurfaceResistance);
+  
+  let Ug: number;
+  
+  if (floorType === 'suspended') {
+    // Suspended floor calculation per BS EN ISO 13370
+    // U = 1 / (Rsi + Rf + Rse + 1/Ug + 1/Ux)
+    // Simplified: Use base U-value with ground resistance adjustment
+    const baseU = calculateUValue(construction);
+    
+    // Ground resistance approximation for suspended floors
+    // Account for underfloor space ventilation
+    const Rg = bPrime / (2 * SOIL_THERMAL_CONDUCTIVITY);
+    
+    // Effective U-value considering ground and ventilation
+    const ventilationFactor = 0.0015; // m²/m standard ventilation
+    const h = 0.3; // Height of underfloor space
+    const Ux = 2 * ventilationFactor * (1450 / (bPrime * h)); // Approximate ventilation heat loss
+    
+    Ug = 1 / (1/baseU + Rg);
+    // Add ventilation loss
+    if (Ux > 0) {
+      Ug = Ug + Ux;
+    }
+  } else {
+    // Solid/Ground floor - BS EN ISO 13370 formula
+    if (dt < bPrime) {
+      // Well-insulated floor
+      Ug = (2 * SOIL_THERMAL_CONDUCTIVITY) / (Math.PI * bPrime + dt) * Math.log((Math.PI * bPrime) / dt + 1);
+    } else {
+      // Poorly-insulated floor (dt >= B')
+      Ug = SOIL_THERMAL_CONDUCTIVITY / (0.457 * bPrime + dt);
+    }
+  }
+  
+  return Math.max(0.01, Ug); // Ensure positive U-value
 }
 
 /**
@@ -293,9 +366,21 @@ export function calculateMonthlyAnalysis(
  */
 export function performCondensationAnalysis(
   construction: Construction,
-  climateData: ClimateData[]
+  climateData: ClimateData[],
+  groundFloorParams?: { perimeter: number; area: number; floorType: 'ground' | 'suspended' | 'solid' | 'intermediate' }
 ): AnalysisResult {
-  const uValue = calculateUValue(construction);
+  // Calculate U-value - use ground floor method if params provided
+  let uValue: number;
+  if (groundFloorParams && construction.type === 'floor') {
+    uValue = calculateGroundFloorUValue(
+      construction,
+      groundFloorParams.perimeter,
+      groundFloorParams.area,
+      groundFloorParams.floorType
+    );
+  } else {
+    uValue = calculateUValue(construction);
+  }
   
   // Use January (worst case) for gradient display
   const winterClimate = climateData[0];

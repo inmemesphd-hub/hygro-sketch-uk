@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Canvas as FabricCanvas, Rect, Line, Text } from 'fabric';
+import { Canvas as FabricCanvas, Rect, Line, FabricText } from 'fabric';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -9,6 +9,7 @@ import {
 import { cn } from '@/lib/utils';
 import { Construction } from '@/types/materials';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { calculateGroundFloorUValue, calculateUValue } from '@/utils/hygrothermalCalculations';
 
 interface JunctionCanvasProps {
   construction: Construction;
@@ -17,7 +18,7 @@ interface JunctionCanvasProps {
 }
 
 type ViewMode = 'wall' | 'floor';
-type FloorType = 'ground' | 'suspended' | 'solid' | 'intermediate';
+export type FloorType = 'ground' | 'suspended' | 'solid' | 'intermediate';
 
 // Material colors and patterns for cross-section
 const getMaterialStyle = (category: string): { color: string; pattern?: string } => {
@@ -56,6 +57,12 @@ export function JunctionCanvas({ construction, className, onConstructionTypeChan
   const [area, setArea] = useState<number>(100);
   const [zoom, setZoom] = useState(1);
 
+  // Calculate P/A ratio and ground floor U-value
+  const pARatio = area > 0 ? perimeter / area : 0;
+  const displayUValue = viewMode === 'floor' && floorType === 'ground' 
+    ? calculateGroundFloorUValue(construction, perimeter, area, floorType)
+    : calculateUValue(construction);
+
   useEffect(() => {
     if (!canvasRef.current) return;
 
@@ -89,6 +96,13 @@ export function JunctionCanvas({ construction, className, onConstructionTypeChan
     // Draw construction layers
     drawConstructionLayers(fabricCanvas, construction, viewMode);
   }, [fabricCanvas, construction, viewMode]);
+
+  // Notify parent when P/A values change
+  useEffect(() => {
+    if (viewMode === 'floor' && onConstructionTypeChange) {
+      onConstructionTypeChange('floor', floorType, perimeter, area);
+    }
+  }, [perimeter, area, floorType]);
 
   const drawGrid = (canvas: FabricCanvas) => {
     const gridSize = 20;
@@ -132,7 +146,7 @@ export function JunctionCanvas({ construction, className, onConstructionTypeChan
       let currentY = startY;
 
       // "Outer surface" label at top
-      const outerLabel = new Text('Outer Surface (Ground/Below)', {
+      const outerLabel = new FabricText('Outer Surface (Ground/Below)', {
         left: startX + layerWidth / 2,
         top: startY - 25,
         fontSize: 11,
@@ -160,8 +174,12 @@ export function JunctionCanvas({ construction, className, onConstructionTypeChan
           data: { type: 'layer', index },
         });
 
-        // Layer label
-        const label = new Text(`${layer.thickness}mm ${layer.material.name}`, {
+        // Layer label with bridging info
+        let labelText = `${layer.thickness}mm ${layer.material.name}`;
+        if (layer.bridging) {
+          labelText += ` [${layer.bridging.percentage}% ${layer.bridging.material.name}]`;
+        }
+        const label = new FabricText(labelText, {
           left: startX + layerWidth / 2,
           top: currentY + layerHeight / 2,
           fontSize: 10,
@@ -195,7 +213,7 @@ export function JunctionCanvas({ construction, className, onConstructionTypeChan
       });
 
       // "Inner surface" label at bottom
-      const innerLabel = new Text('Inner Surface (Room)', {
+      const innerLabel = new FabricText('Inner Surface (Room)', {
         left: startX + layerWidth / 2,
         top: currentY + 15,
         fontSize: 11,
@@ -211,7 +229,7 @@ export function JunctionCanvas({ construction, className, onConstructionTypeChan
       let currentX = startX;
 
       // "Internal" label
-      const intLabel = new Text('INTERNAL', {
+      const intLabel = new FabricText('INTERNAL', {
         left: 50,
         top: startY + layerHeight / 2,
         fontSize: 11,
@@ -241,19 +259,22 @@ export function JunctionCanvas({ construction, className, onConstructionTypeChan
           data: { type: 'layer', index },
         });
 
-        // Layer label (material name)
-        const label = new Text(layer.material.name.split(' ').slice(0, 2).join(' '), {
+        // Material name (vertical text) - positioned inside the layer
+        const shortName = layer.material.name.split(' ').slice(0, 2).join(' ');
+        const verticalLabel = new FabricText(shortName, {
           left: currentX + layerWidth / 2,
-          top: startY + layerHeight + 10,
+          top: startY + layerHeight / 2,
           fontSize: 9,
-          fill: '#94a3b8',
+          fill: '#000',
+          angle: -90,
           originX: 'center',
+          originY: 'center',
           selectable: false,
           data: { type: 'layer', index },
         });
 
-        // Thickness label
-        const thicknessLabel = new Text(`${layer.thickness}mm`, {
+        // Thickness label at top
+        const thicknessLabel = new FabricText(`${layer.thickness}mm`, {
           left: currentX + layerWidth / 2,
           top: startY - 15,
           fontSize: 9,
@@ -263,7 +284,7 @@ export function JunctionCanvas({ construction, className, onConstructionTypeChan
           data: { type: 'layer', index },
         });
 
-        // Bridging indication
+        // Bridging indication with label
         if (layer.bridging) {
           const bridgeWidth = 4;
           const spacing = 40;
@@ -279,14 +300,26 @@ export function JunctionCanvas({ construction, className, onConstructionTypeChan
             });
             canvas.add(bridge);
           }
+          
+          // Bridging info label below
+          const bridgeLabel = new FabricText(`${layer.bridging.percentage}% ${layer.bridging.material.name.split(' ')[0]}`, {
+            left: currentX + layerWidth / 2,
+            top: startY + layerHeight + 25,
+            fontSize: 7,
+            fill: '#f59e0b',
+            originX: 'center',
+            selectable: false,
+            data: { type: 'layer', index },
+          });
+          canvas.add(bridgeLabel);
         }
 
-        canvas.add(rect, label, thicknessLabel);
+        canvas.add(rect, verticalLabel, thicknessLabel);
         currentX += layerWidth;
       });
 
       // "External" label
-      const extLabel = new Text('EXTERNAL', {
+      const extLabel = new FabricText('EXTERNAL', {
         left: currentX + 50,
         top: startY + layerHeight / 2,
         fontSize: 11,
@@ -325,6 +358,27 @@ export function JunctionCanvas({ construction, className, onConstructionTypeChan
       onConstructionTypeChange('floor', floorType, perimeter, area);
     } else if (onConstructionTypeChange) {
       onConstructionTypeChange('wall');
+    }
+  };
+
+  const handleFloorTypeChange = (type: FloorType) => {
+    setFloorType(type);
+    if (onConstructionTypeChange) {
+      onConstructionTypeChange('floor', type, perimeter, area);
+    }
+  };
+
+  const handlePerimeterChange = (value: number) => {
+    setPerimeter(value);
+    if (onConstructionTypeChange) {
+      onConstructionTypeChange('floor', floorType, value, area);
+    }
+  };
+
+  const handleAreaChange = (value: number) => {
+    setArea(value);
+    if (onConstructionTypeChange) {
+      onConstructionTypeChange('floor', floorType, perimeter, value);
     }
   };
 
@@ -384,7 +438,7 @@ export function JunctionCanvas({ construction, className, onConstructionTypeChan
         {viewMode === 'floor' && (
           <>
             <div className="w-px h-6 bg-border mx-2" />
-            <Select value={floorType} onValueChange={(v) => setFloorType(v as FloorType)}>
+            <Select value={floorType} onValueChange={(v) => handleFloorTypeChange(v as FloorType)}>
               <SelectTrigger className="w-32 h-8 text-xs">
                 <SelectValue />
               </SelectTrigger>
@@ -396,14 +450,14 @@ export function JunctionCanvas({ construction, className, onConstructionTypeChan
               </SelectContent>
             </Select>
             
-            {floorType === 'ground' && (
+            {(floorType === 'ground' || floorType === 'solid' || floorType === 'suspended') && (
               <>
                 <div className="flex items-center gap-1 ml-2">
                   <Label className="text-xs text-muted-foreground">P:</Label>
                   <Input
                     type="number"
                     value={perimeter}
-                    onChange={(e) => setPerimeter(parseFloat(e.target.value) || 0)}
+                    onChange={(e) => handlePerimeterChange(parseFloat(e.target.value) || 0)}
                     className="w-16 h-8 text-xs"
                     placeholder="m"
                   />
@@ -414,7 +468,7 @@ export function JunctionCanvas({ construction, className, onConstructionTypeChan
                   <Input
                     type="number"
                     value={area}
-                    onChange={(e) => setArea(parseFloat(e.target.value) || 0)}
+                    onChange={(e) => handleAreaChange(parseFloat(e.target.value) || 0)}
                     className="w-16 h-8 text-xs"
                     placeholder="m²"
                   />
@@ -427,16 +481,21 @@ export function JunctionCanvas({ construction, className, onConstructionTypeChan
       </div>
 
       {/* Canvas */}
-      <div className="canvas-container flex-1 flex items-center justify-center p-4">
+      <div className="canvas-container flex-1 flex items-center justify-center p-4 overflow-auto">
         <canvas ref={canvasRef} className="rounded border border-border/50" />
       </div>
 
       {/* Info Bar */}
-      <div className="flex items-center justify-between px-4 py-2 border-t border-border bg-secondary/20 text-xs text-muted-foreground">
+      <div className="flex items-center justify-between px-4 py-2 border-t border-border bg-secondary/20 text-xs text-muted-foreground flex-wrap gap-2">
         <span>
           {construction.layers.length} layers | Total: {construction.layers.reduce((s, l) => s + l.thickness, 0)}mm
-          {viewMode === 'floor' && floorType === 'ground' && ` | P/A: ${(perimeter / area).toFixed(3)}`}
+          {viewMode === 'floor' && (floorType === 'ground' || floorType === 'solid' || floorType === 'suspended') && ` | P/A: ${pARatio.toFixed(3)}`}
         </span>
+        {viewMode === 'floor' && (floorType === 'ground' || floorType === 'solid' || floorType === 'suspended') && (
+          <span className="font-mono text-primary">
+            U-value (ISO 13370): {displayUValue.toFixed(3)} W/m²K
+          </span>
+        )}
         <span>Grid: 20mm</span>
       </div>
     </div>

@@ -16,7 +16,7 @@ interface MaterialLibraryProps {
   open: boolean;
   onClose: () => void;
   onSelect: (material: Material) => void;
-  mode?: 'layer' | 'bridging';
+  mode?: 'layer' | 'bridging' | 'replace';
 }
 
 export function MaterialLibrary({ open, onClose, onSelect, mode = 'layer' }: MaterialLibraryProps) {
@@ -82,21 +82,32 @@ export function MaterialLibrary({ open, onClose, onSelect, mode = 'layer' }: Mat
     handleSelect(newMaterial);
   };
 
+  const getModeLabel = () => {
+    switch (mode) {
+      case 'bridging':
+        return 'Selecting Bridging Material';
+      case 'replace':
+        return 'Replacing Layer Material';
+      default:
+        return null;
+    }
+  };
+
   return (
     <Dialog open={open} onOpenChange={onClose}>
-      <DialogContent className="max-w-4xl max-h-[80vh] overflow-hidden flex flex-col bg-card border-border">
+      <DialogContent className="max-w-4xl max-h-[85vh] overflow-hidden flex flex-col bg-card border-border">
         <DialogHeader>
           <DialogTitle className="text-lg font-semibold flex items-center gap-2">
             UK Material Library
-            {mode === 'bridging' && (
+            {getModeLabel() && (
               <span className="text-xs px-2 py-1 rounded bg-warning/20 text-warning">
-                Selecting Bridging Material
+                {getModeLabel()}
               </span>
             )}
           </DialogTitle>
         </DialogHeader>
 
-        <div className="flex flex-col gap-4">
+        <div className="flex flex-col gap-4 flex-1 min-h-0">
           {/* Search and Custom Material Toggle */}
           <div className="flex gap-2">
             <div className="relative flex-1">
@@ -222,9 +233,9 @@ export function MaterialLibrary({ open, onClose, onSelect, mode = 'layer' }: Mat
             </div>
           )}
 
-          {/* Category Tabs */}
-          <ScrollArea className="w-full">
-            <div className="flex gap-2 pb-2">
+          {/* Category Tabs - Horizontal scrollable */}
+          <div className="overflow-x-auto">
+            <div className="flex gap-2 pb-2 min-w-max">
               <Button
                 variant={activeCategory === 'all' ? 'default' : 'outline'}
                 size="sm"
@@ -249,11 +260,11 @@ export function MaterialLibrary({ open, onClose, onSelect, mode = 'layer' }: Mat
                 );
               })}
             </div>
-          </ScrollArea>
+          </div>
 
-          {/* Materials Grid */}
-          <ScrollArea className="flex-1 min-h-0 max-h-[300px]">
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-3 pr-4">
+          {/* Materials Grid - Takes remaining space */}
+          <ScrollArea className="flex-1 min-h-0">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3 pr-4 pb-4">
               {filteredMaterials.map(material => (
                 <button
                   key={material.id}
@@ -264,39 +275,39 @@ export function MaterialLibrary({ open, onClose, onSelect, mode = 'layer' }: Mat
                   )}
                 >
                   <div className="flex items-start justify-between">
-                    <div>
-                      <div className="flex items-center gap-2">
-                        <h4 className="font-medium text-foreground group-hover:text-primary transition-colors">
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <h4 className="font-medium text-foreground group-hover:text-primary transition-colors truncate">
                           {material.name}
                         </h4>
                         {material.isCustom && (
-                          <span className="text-[10px] px-1.5 py-0.5 rounded bg-primary/20 text-primary">
+                          <span className="text-[10px] px-1.5 py-0.5 rounded bg-primary/20 text-primary shrink-0">
                             Custom
                           </span>
                         )}
                       </div>
-                      <p className="text-xs text-muted-foreground mt-1">
+                      <p className="text-xs text-muted-foreground mt-1 line-clamp-2">
                         {material.description}
                       </p>
                     </div>
-                    <Plus className="w-4 h-4 text-muted-foreground group-hover:text-primary shrink-0" />
+                    <Plus className="w-4 h-4 text-muted-foreground group-hover:text-primary shrink-0 ml-2" />
                   </div>
                   
                   <div className="grid grid-cols-3 gap-2 mt-3 text-xs">
-                    <div>
+                    <div className="min-w-0">
                       <span className="text-muted-foreground">λ</span>
                       <span className="ml-1 font-mono text-foreground">{material.thermalConductivity}</span>
-                      <span className="text-muted-foreground ml-0.5">W/mK</span>
+                      <span className="text-muted-foreground ml-0.5 hidden sm:inline">W/mK</span>
                     </div>
-                    <div>
+                    <div className="min-w-0">
                       <span className="text-muted-foreground">μ</span>
                       <span className="ml-1 font-mono text-foreground">{material.vapourResistivity}</span>
-                      <span className="text-muted-foreground ml-0.5">MNs/gm</span>
+                      <span className="text-muted-foreground ml-0.5 hidden sm:inline">MNs/gm</span>
                     </div>
-                    <div>
+                    <div className="min-w-0">
                       <span className="text-muted-foreground">ρ</span>
                       <span className="ml-1 font-mono text-foreground">{material.density}</span>
-                      <span className="text-muted-foreground ml-0.5">kg/m³</span>
+                      <span className="text-muted-foreground ml-0.5 hidden sm:inline">kg/m³</span>
                     </div>
                   </div>
                   

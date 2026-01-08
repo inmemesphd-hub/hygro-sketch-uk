@@ -3,10 +3,10 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { Construction, ConstructionLayer, ClimateData, AnalysisResult } from '@/types/materials';
 import { ukMaterialDatabase } from '@/data/ukMaterials';
 import { ukMonthlyClimateData } from '@/data/ukClimate';
-import { performCondensationAnalysis, calculateUValue, calculateUValueWithoutBridging } from '@/utils/hygrothermalCalculations';
+import { performCondensationAnalysis, calculateUValue, calculateUValueWithoutBridging, calculateGroundFloorUValue } from '@/utils/hygrothermalCalculations';
 import { ConstructionBuilder } from '@/components/ConstructionBuilder';
 import { ClimateInput } from '@/components/ClimateInput';
-import { JunctionCanvas } from '@/components/JunctionCanvas';
+import { JunctionCanvas, FloorType } from '@/components/JunctionCanvas';
 import { GlastaDiagram, TemperatureProfile } from '@/components/charts/GlastaDiagram';
 import { MonthlyAccumulationChart } from '@/components/charts/MonthlyAccumulationChart';
 import { ResultsSummary } from '@/components/ResultsSummary';
@@ -74,17 +74,46 @@ export default function AnalysisWorkspace() {
   const [exportFormat, setExportFormat] = useState<'pdf' | 'word'>('pdf');
   const [selectedGlaserMonth, setSelectedGlaserMonth] = useState<string>('worst');
   
+  // Floor-specific state
+  const [constructionType, setConstructionType] = useState<'wall' | 'floor'>('wall');
+  const [floorType, setFloorType] = useState<FloorType>('ground');
+  const [perimeter, setPerimeter] = useState<number>(40);
+  const [area, setArea] = useState<number>(100);
+  
   const glastaDiagramRef = useRef<HTMLDivElement>(null);
 
+  const handleConstructionTypeChange = (type: 'wall' | 'floor', ft?: FloorType, p?: number, a?: number) => {
+    setConstructionType(type);
+    if (type === 'floor') {
+      if (ft) setFloorType(ft);
+      if (p !== undefined) setPerimeter(p);
+      if (a !== undefined) setArea(a);
+      setConstruction(prev => ({ ...prev, type: 'floor' }));
+    } else {
+      setConstruction(prev => ({ ...prev, type: 'wall' }));
+    }
+  };
+
   const runAnalysis = () => {
+    if (construction.layers.length === 0) return;
+    
     setIsAnalyzing(true);
     
     // Simulate processing delay for UX
     setTimeout(() => {
-      const result = performCondensationAnalysis(construction, climateData);
-      setAnalysisResult(result);
-      setActiveTab('results');
-      setIsAnalyzing(false);
+      try {
+        const groundFloorParams = constructionType === 'floor' && (floorType === 'ground' || floorType === 'solid' || floorType === 'suspended')
+          ? { perimeter, area, floorType }
+          : undefined;
+        
+        const result = performCondensationAnalysis(construction, climateData, groundFloorParams);
+        setAnalysisResult(result);
+        setActiveTab('results');
+      } catch (error) {
+        console.error('Analysis error:', error);
+      } finally {
+        setIsAnalyzing(false);
+      }
     }, 800);
   };
 
@@ -325,12 +354,12 @@ export default function AnalysisWorkspace() {
     pdf.setFontSize(10);
     pdf.text('U-Value (with bridging):', margin + 5, y + 8);
     pdf.setTextColor(...colors.primary);
-    pdf.text(`${analysisResult!.uValue.toFixed(3)} W/m²K`, margin + 55, y + 8);
+    pdf.text(`${analysisResult!.uValue.toFixed(3)} W/m2K`, margin + 55, y + 8);
     
     pdf.setTextColor(...colors.text);
     pdf.text('U-Value (without bridging):', margin + 5, y + 16);
     pdf.setTextColor(...colors.muted);
-    pdf.text(`${(analysisResult!.uValueWithoutBridging || analysisResult!.uValue).toFixed(3)} W/m²K`, margin + 60, y + 16);
+    pdf.text(`${(analysisResult!.uValueWithoutBridging || analysisResult!.uValue).toFixed(3)} W/m2K`, margin + 60, y + 16);
     
     // ==================== NEW PAGE - RESULTS ====================
     pdf.addPage();
@@ -405,10 +434,10 @@ export default function AnalysisWorkspace() {
     pdf.setTextColor(255, 255, 255);
     pdf.setFontSize(7);
     pdf.text('Month', margin + 2, y + 5.5);
-    pdf.text('Condensation (g/m²)', margin + 30, y + 5.5);
-    pdf.text('Evaporation (g/m²)', margin + 70, y + 5.5);
-    pdf.text('Net (g/m²)', margin + 110, y + 5.5);
-    pdf.text('Cumulative (g/m²)', margin + 140, y + 5.5);
+    pdf.text('Condensation (g/m2)', margin + 30, y + 5.5);
+    pdf.text('Evaporation (g/m2)', margin + 70, y + 5.5);
+    pdf.text('Net (g/m2)', margin + 110, y + 5.5);
+    pdf.text('Cumulative (g/m2)', margin + 140, y + 5.5);
     
     y += 8;
     pdf.setFont('helvetica', 'normal');
@@ -626,12 +655,12 @@ export default function AnalysisWorkspace() {
 
       {/* Main Content */}
       <div className="flex-1 flex overflow-hidden">
-        {/* Sidebar */}
+        {/* Sidebar - Wider now */}
         <AnimatePresence>
           {sidebarOpen && (
             <motion.aside
               initial={{ width: 0, opacity: 0 }}
-              animate={{ width: 380, opacity: 1 }}
+              animate={{ width: 420, opacity: 1 }}
               exit={{ width: 0, opacity: 0 }}
               transition={{ duration: 0.2 }}
               className="border-r border-border bg-card overflow-hidden shrink-0"
@@ -663,7 +692,7 @@ export default function AnalysisWorkspace() {
                 </TabsList>
 
                 <div className="flex-1 overflow-hidden">
-                  <TabsContent value="construction" className="h-full m-0 p-4">
+                  <TabsContent value="construction" className="h-full m-0 p-4 overflow-auto">
                     <ConstructionBuilder 
                       construction={construction}
                       onChange={setConstruction}
@@ -743,6 +772,7 @@ export default function AnalysisWorkspace() {
             <JunctionCanvas 
               construction={construction}
               className="flex-shrink-0"
+              onConstructionTypeChange={handleConstructionTypeChange}
             />
 
             {/* Analysis Results */}
@@ -750,22 +780,23 @@ export default function AnalysisWorkspace() {
               <motion.div
                 initial={{ opacity: 0, y: 20 }}
                 animate={{ opacity: 1, y: 0 }}
-                className="flex-1 grid grid-cols-1 lg:grid-cols-2 gap-4 min-h-0"
+                className="flex-1 grid grid-cols-1 lg:grid-cols-2 gap-4 min-h-[500px]"
               >
-                <div className="space-y-4 overflow-auto">
-                  <div ref={glastaDiagramRef}>
+                <div className="flex flex-col gap-4">
+                  <div ref={glastaDiagramRef} className="flex-1 min-h-[350px]">
                     <GlastaDiagram 
                       result={analysisResult} 
                       climateData={climateData}
                       selectedMonth={selectedGlaserMonth}
                       onMonthChange={setSelectedGlaserMonth}
+                      className="h-full"
                     />
                   </div>
                   <TemperatureProfile result={analysisResult} />
                 </div>
                 
-                <div className="space-y-4 overflow-auto">
-                  <MonthlyAccumulationChart monthlyData={analysisResult.monthlyData} />
+                <div className="flex flex-col gap-4">
+                  <MonthlyAccumulationChart monthlyData={analysisResult.monthlyData} className="flex-1 min-h-[350px]" />
                   <ResultsSummary 
                     result={analysisResult}
                     onExportPDF={exportReport}

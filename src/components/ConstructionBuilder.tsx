@@ -10,7 +10,7 @@ import { Switch } from '@/components/ui/switch';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { 
   Plus, Trash2, GripVertical, Layers, 
-  ChevronDown, ChevronUp, Settings, Edit2
+  ChevronDown, ChevronUp, Settings, Edit2, Replace
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { calculateUValue, calculateLayerThermalResistance, calculateUValueWithoutBridging } from '@/utils/hygrothermalCalculations';
@@ -36,6 +36,7 @@ export function ConstructionBuilder({ construction, onChange }: ConstructionBuil
   const [expandedLayer, setExpandedLayer] = useState<string | null>(null);
   const [addingToIndex, setAddingToIndex] = useState<number | null>(null);
   const [selectingBridgingForLayer, setSelectingBridgingForLayer] = useState<number | null>(null);
+  const [replacingLayerIndex, setReplacingLayerIndex] = useState<number | null>(null);
   const [editingRsi, setEditingRsi] = useState(false);
   const [editingRse, setEditingRse] = useState(false);
 
@@ -60,6 +61,13 @@ export function ConstructionBuilder({ construction, onChange }: ConstructionBuil
     setAddingToIndex(null);
   };
 
+  const replaceLayerMaterial = (layerIndex: number, material: Material) => {
+    const newLayers = [...construction.layers];
+    newLayers[layerIndex] = { ...newLayers[layerIndex], material };
+    onChange({ ...construction, layers: newLayers });
+    setReplacingLayerIndex(null);
+  };
+
   const updateBridgingMaterial = (layerIndex: number, material: Material) => {
     const layer = construction.layers[layerIndex];
     if (layer.bridging) {
@@ -73,6 +81,8 @@ export function ConstructionBuilder({ construction, onChange }: ConstructionBuil
   const handleMaterialSelect = (material: Material) => {
     if (selectingBridgingForLayer !== null) {
       updateBridgingMaterial(selectingBridgingForLayer, material);
+    } else if (replacingLayerIndex !== null) {
+      replaceLayerMaterial(replacingLayerIndex, material);
     } else {
       addLayer(material);
     }
@@ -253,6 +263,28 @@ export function ConstructionBuilder({ construction, onChange }: ConstructionBuil
                 {/* Expanded Details */}
                 {isExpanded && (
                   <div className="border-t border-border p-4 space-y-4 bg-secondary/20">
+                    {/* Replace Material Button */}
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <Label className="text-sm">Material</Label>
+                        <p className="text-xs text-muted-foreground">{layer.material.name}</p>
+                      </div>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setReplacingLayerIndex(index);
+                          setSelectingBridgingForLayer(null);
+                          setAddingToIndex(null);
+                          setMaterialLibraryOpen(true);
+                        }}
+                      >
+                        <Replace className="w-4 h-4 mr-2" />
+                        Replace
+                      </Button>
+                    </div>
+
                     {/* Thickness Slider + Input */}
                     <div className="space-y-2">
                       <div className="flex items-center justify-between">
@@ -260,8 +292,9 @@ export function ConstructionBuilder({ construction, onChange }: ConstructionBuil
                         <div className="flex items-center gap-2">
                           <Input
                             type="number"
-                            min="1"
+                            min="0.1"
                             max="1000"
+                            step="0.1"
                             value={layer.thickness}
                             onChange={(e) => {
                               const val = parseFloat(e.target.value);
@@ -326,6 +359,8 @@ export function ConstructionBuilder({ construction, onChange }: ConstructionBuil
                             onClick={(e) => {
                               e.stopPropagation();
                               setSelectingBridgingForLayer(index);
+                              setReplacingLayerIndex(null);
+                              setAddingToIndex(null);
                               setMaterialLibraryOpen(true);
                             }}
                           >
@@ -340,18 +375,18 @@ export function ConstructionBuilder({ construction, onChange }: ConstructionBuil
                               <Input
                                 type="number"
                                 min="0.0001"
-                                max="50"
+                                max="100"
                                 step="0.0001"
                                 value={layer.bridging.percentage}
                                 onChange={(e) => {
                                   const val = parseFloat(e.target.value);
-                                  if (!isNaN(val) && val >= 0.0001 && val <= 50) {
+                                  if (!isNaN(val) && val >= 0.0001 && val <= 100) {
                                     updateLayer(index, {
                                       bridging: { ...layer.bridging!, percentage: val }
                                     });
                                   }
                                 }}
-                                className="w-20 h-6 text-xs font-mono"
+                                className="w-24 h-6 text-xs font-mono"
                               />
                               <span className="text-xs text-muted-foreground">%</span>
                             </div>
@@ -365,6 +400,9 @@ export function ConstructionBuilder({ construction, onChange }: ConstructionBuil
                             max={50}
                             step={0.1}
                           />
+                          <p className="text-xs text-muted-foreground">
+                            Use input for values below 0.1% (min: 0.0001%)
+                          </p>
                         </div>
                       </div>
                     )}
@@ -381,6 +419,7 @@ export function ConstructionBuilder({ construction, onChange }: ConstructionBuil
             onClick={() => {
               setAddingToIndex(null);
               setSelectingBridgingForLayer(null);
+              setReplacingLayerIndex(null);
               setMaterialLibraryOpen(true);
             }}
           >
@@ -429,9 +468,11 @@ export function ConstructionBuilder({ construction, onChange }: ConstructionBuil
         onClose={() => {
           setMaterialLibraryOpen(false);
           setSelectingBridgingForLayer(null);
+          setReplacingLayerIndex(null);
+          setAddingToIndex(null);
         }}
         onSelect={handleMaterialSelect}
-        mode={selectingBridgingForLayer !== null ? 'bridging' : 'layer'}
+        mode={selectingBridgingForLayer !== null ? 'bridging' : replacingLayerIndex !== null ? 'replace' : 'layer'}
       />
     </div>
   );
