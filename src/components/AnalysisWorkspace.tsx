@@ -481,21 +481,21 @@ export default function AnalysisWorkspace() {
       };
       
       if (!isFloor) {
-        // HORIZONTAL cross-section for walls: External on LEFT, Internal on RIGHT
+        // HORIZONTAL cross-section for walls: Internal on LEFT, External on RIGHT
         pdf.setFontSize(8);
-        pdf.setTextColor(...colors.muted);
-        pdf.text('External', margin, y + 5);
+        pdf.setTextColor(...colors.success);
+        pdf.text('Internal', margin, y + 15);
         
         y += 10;
         
         const totalThickness = buildup.layers.reduce((sum, l) => sum + l.thickness, 0);
-        const maxLayerWidth = contentWidth - 30;
+        const maxLayerWidth = contentWidth - 35;
         const scale = Math.min(0.15, maxLayerWidth / totalThickness);
         const layerHeight = 30;
         
-        let currentX = margin + 10;
+        let currentX = margin + 18;
         
-        // Draw layers in order: first layer (external side) on left, last layer (internal side) on right
+        // Draw layers in order: first layer (internal side) on left, last layer (external side) on right
         buildup.layers.forEach((layer, idx) => {
           const layerWidth = Math.max(layer.thickness * scale, 15);
           const { color, pattern } = getMaterialPattern(layer.material.category);
@@ -543,7 +543,6 @@ export default function AnalysisWorkspace() {
           pdf.text(materialShort.substring(0, 12), currentX + layerWidth / 2, y + layerHeight + 8, { align: 'center' });
           if (layer.bridging) {
             pdf.setTextColor(...colors.muted);
-            // Show bridge percentage AND material name
             const bridgeMaterialShort = layer.bridging.material.name.split(' ')[0];
             const bridgeLabel = `(${layer.bridging.percentage}% ${bridgeMaterialShort})`;
             pdf.text(bridgeLabel.substring(0, 20), currentX + layerWidth / 2, y + layerHeight + 12, { align: 'center' });
@@ -553,8 +552,8 @@ export default function AnalysisWorkspace() {
         });
         
         pdf.setFontSize(8);
-        pdf.setTextColor(...colors.success);
-        pdf.text('Internal', currentX + 5, y + layerHeight / 2 + 3);
+        pdf.setTextColor(...colors.muted);
+        pdf.text('External', currentX + 5, y + layerHeight / 2 + 3);
         
         y += layerHeight + 20;
       } else {
@@ -570,10 +569,8 @@ export default function AnalysisWorkspace() {
         const maxLayerHeight = 80;
         const scale = Math.min(0.2, maxLayerHeight / totalThickness);
         
-        // Reverse layers so internal is at top
-        const layersReversed = [...buildup.layers].reverse();
-        
-        layersReversed.forEach((layer, idx) => {
+        // Draw layers in order (first layer = internal-most, at top)
+        buildup.layers.forEach((layer, idx) => {
           const layerHeight = Math.max(layer.thickness * scale, 12);
           const { color, pattern } = getMaterialPattern(layer.material.category);
           
@@ -613,17 +610,17 @@ export default function AnalysisWorkspace() {
           pdf.setLineWidth(0.3);
           pdf.rect(margin, currentY, contentWidth, layerHeight);
           
-        pdf.setFontSize(7);
-        pdf.setTextColor(0, 0, 0);
-        let labelText = `${layer.thickness}mm ${layer.material.name}`;
-        if (layer.bridging) {
-          labelText += ` (${layer.bridging.percentage}% ${layer.bridging.material.name})`;
-        }
-        // Wrap text if too long instead of truncating
-        const labelLines = pdf.splitTextToSize(labelText, contentWidth - 10);
-        labelLines.forEach((line: string, lineIdx: number) => {
-          pdf.text(line, margin + 3, currentY + layerHeight / 2 + 2 + (lineIdx * 4));
-        });
+          pdf.setFontSize(7);
+          pdf.setTextColor(0, 0, 0);
+          let labelText = `${layer.thickness}mm ${layer.material.name}`;
+          if (layer.bridging) {
+            labelText += ` (${layer.bridging.percentage}% ${layer.bridging.material.name})`;
+          }
+          // Wrap text if too long instead of truncating
+          const labelLines = pdf.splitTextToSize(labelText, contentWidth - 10);
+          labelLines.forEach((line: string, lineIdx: number) => {
+            pdf.text(line, margin + 3, currentY + layerHeight / 2 + 2 + (lineIdx * 4));
+          });
           
           currentY += layerHeight;
         });
@@ -1222,30 +1219,21 @@ export default function AnalysisWorkspace() {
           y += 8;
         }
         
-        // Draw leader lines for narrow layers
+        // Draw compact leader lines for narrow layers - no title, just below diagram
         if (narrowPressureLayers.length > 0) {
-          y += 5;
-          pdf.setFontSize(6);
-          pdf.setTextColor(...colors.muted);
-          pdf.text('Narrow layers (see leaders):', margin, y);
-          y += 4;
-          
           narrowPressureLayers.forEach((item, idx) => {
-            // Draw leader line
+            // Short vertical leader from layer
             pdf.setDrawColor(100, 100, 100);
-            pdf.setLineWidth(0.3);
-            const labelX = margin + 5 + (idx % 3) * 55;
-            const labelY = y + Math.floor(idx / 3) * 8;
-            pdf.line(item.centerX, item.bottomY, item.centerX, item.bottomY + 5);
-            pdf.line(item.centerX, item.bottomY + 5, labelX + 25, labelY - 2);
+            pdf.setLineWidth(0.2);
+            const leaderEndY = item.bottomY + 4 + (idx % 2) * 3;
+            pdf.line(item.centerX, item.bottomY, item.centerX, leaderEndY);
             
-            // Wrapped label
-            const wrappedLabel = pdf.splitTextToSize(item.name, 50);
-            pdf.setTextColor(40, 40, 40);
-            pdf.text(wrappedLabel[0], labelX, labelY);
+            // Compact label at end of leader
+            pdf.setFontSize(4);
+            pdf.setTextColor(60, 60, 60);
+            const shortLabel = item.name.length > 10 ? item.name.slice(0, 8) + '..' : item.name;
+            pdf.text(shortLabel, item.centerX + 1, leaderEndY + 2);
           });
-          
-          y += Math.ceil(narrowPressureLayers.length / 3) * 8 + 5;
         }
 
         // Material layers list
