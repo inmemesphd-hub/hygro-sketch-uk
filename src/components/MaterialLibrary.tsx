@@ -84,7 +84,7 @@ export function MaterialLibrary({ open, onClose, onSelect, mode = 'layer' }: Mat
 
   return (
     <Dialog open={open} onOpenChange={onClose}>
-      <DialogContent className="max-w-4xl max-h-[85vh] bg-card border-border">
+      <DialogContent className="max-w-4xl max-h-[80vh] overflow-hidden flex flex-col bg-card border-border">
         <DialogHeader>
           <DialogTitle className="text-lg font-semibold flex items-center gap-2">
             UK Material Library
@@ -252,7 +252,7 @@ export function MaterialLibrary({ open, onClose, onSelect, mode = 'layer' }: Mat
           </ScrollArea>
 
           {/* Materials Grid */}
-          <ScrollArea className="h-[400px]">
+          <ScrollArea className="flex-1 min-h-0 max-h-[300px]">
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3 pr-4">
               {filteredMaterials.map(material => (
                 <button

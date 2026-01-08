@@ -1,37 +1,60 @@
 import { useEffect, useRef, useState } from 'react';
-import { Canvas as FabricCanvas, Rect, Line, Text, Circle, Group } from 'fabric';
+import { Canvas as FabricCanvas, Rect, Line, Text } from 'fabric';
 import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
 import { 
-  MousePointer, Square, Minus, RotateCcw, ZoomIn, ZoomOut, 
-  Grid, Download, Trash2 
+  Square, Minus, RotateCcw, ZoomIn, ZoomOut
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Construction } from '@/types/materials';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 
 interface JunctionCanvasProps {
   construction: Construction;
   className?: string;
+  onConstructionTypeChange?: (type: 'wall' | 'floor', floorType?: FloorType, perimeter?: number, area?: number) => void;
 }
 
-type Tool = 'select' | 'wall' | 'floor' | 'roof';
+type ViewMode = 'wall' | 'floor';
+type FloorType = 'ground' | 'suspended' | 'solid' | 'intermediate';
 
-export function JunctionCanvas({ construction, className }: JunctionCanvasProps) {
+// Material colors and patterns for cross-section
+const getMaterialStyle = (category: string): { color: string; pattern?: string } => {
+  switch (category) {
+    case 'masonry':
+      return { color: '#cd5c5c', pattern: 'brick' };
+    case 'insulation':
+      return { color: '#ffdab9', pattern: 'dots' };
+    case 'concrete':
+      return { color: '#a9a9a9', pattern: 'solid' };
+    case 'timber':
+      return { color: '#d2b48c', pattern: 'wood' };
+    case 'membrane':
+      return { color: '#6495ed', pattern: 'lines' };
+    case 'plasterboard':
+      return { color: '#f5f5dc', pattern: 'solid' };
+    case 'metal':
+      return { color: '#c0c0c0', pattern: 'metallic' };
+    case 'airgap':
+      return { color: '#f0f8ff', pattern: 'air' };
+    case 'render':
+      return { color: '#deb887', pattern: 'solid' };
+    case 'cladding':
+      return { color: '#8b4513', pattern: 'wood' };
+    default:
+      return { color: '#c8c8c8', pattern: 'solid' };
+  }
+};
+
+export function JunctionCanvas({ construction, className, onConstructionTypeChange }: JunctionCanvasProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [fabricCanvas, setFabricCanvas] = useState<FabricCanvas | null>(null);
-  const [activeTool, setActiveTool] = useState<Tool>('select');
+  const [viewMode, setViewMode] = useState<ViewMode>('wall');
+  const [floorType, setFloorType] = useState<FloorType>('ground');
+  const [perimeter, setPerimeter] = useState<number>(40);
+  const [area, setArea] = useState<number>(100);
   const [zoom, setZoom] = useState(1);
-
-  // Layer colors matching the construction builder
-  const layerColors = [
-    '#3b82f6', // blue
-    '#14b8a6', // cyan
-    '#22c55e', // green
-    '#f59e0b', // amber
-    '#a855f7', // purple
-    '#ec4899', // pink
-    '#f97316', // orange
-    '#10b981', // emerald
-  ];
 
   useEffect(() => {
     if (!canvasRef.current) return;
@@ -40,12 +63,10 @@ export function JunctionCanvas({ construction, className }: JunctionCanvasProps)
       width: 600,
       height: 400,
       backgroundColor: '#0c1222',
-      selection: true,
+      selection: false,
     });
 
     setFabricCanvas(canvas);
-
-    // Draw grid
     drawGrid(canvas);
 
     return () => {
@@ -66,8 +87,8 @@ export function JunctionCanvas({ construction, className }: JunctionCanvasProps)
     });
 
     // Draw construction layers
-    drawConstructionLayers(fabricCanvas, construction);
-  }, [fabricCanvas, construction]);
+    drawConstructionLayers(fabricCanvas, construction, viewMode);
+  }, [fabricCanvas, construction, viewMode]);
 
   const drawGrid = (canvas: FabricCanvas) => {
     const gridSize = 20;
@@ -97,104 +118,188 @@ export function JunctionCanvas({ construction, className }: JunctionCanvasProps)
     }
   };
 
-  const drawConstructionLayers = (canvas: FabricCanvas, construction: Construction) => {
+  const drawConstructionLayers = (canvas: FabricCanvas, construction: Construction, mode: ViewMode) => {
     if (construction.layers.length === 0) return;
 
-    const startX = 100;
-    const startY = 50;
-    const layerHeight = 280;
-    let currentX = startX;
-
-    // Scale factor to visualize thickness (1mm = 0.8px for visibility)
+    const isFloor = mode === 'floor';
+    const startX = isFloor ? 50 : 100;
+    const startY = isFloor ? 80 : 50;
     const scale = 0.8;
 
-    construction.layers.forEach((layer, index) => {
-      const layerWidth = Math.max(layer.thickness * scale, 20);
-      const color = layerColors[index % layerColors.length];
+    if (isFloor) {
+      // Horizontal floor layout
+      const layerWidth = 500;
+      let currentY = startY;
 
-      // Main layer rectangle
-      const rect = new Rect({
-        left: currentX,
-        top: startY,
-        width: layerWidth,
-        height: layerHeight,
-        fill: color + '40', // 25% opacity
-        stroke: color,
-        strokeWidth: 2,
-        selectable: false,
-        data: { type: 'layer', index },
-      });
-
-      // Layer label
-      const label = new Text(layer.material.name.split(' ')[0], {
-        left: currentX + layerWidth / 2,
-        top: startY + layerHeight + 10,
-        fontSize: 10,
-        fill: '#94a3b8',
+      // "Outer surface" label at top
+      const outerLabel = new Text('Outer Surface (Ground/Below)', {
+        left: startX + layerWidth / 2,
+        top: startY - 25,
+        fontSize: 11,
+        fill: '#3b82f6',
         originX: 'center',
         selectable: false,
-        data: { type: 'layer', index },
+        data: { type: 'layer' },
       });
+      canvas.add(outerLabel);
 
-      // Thickness label
-      const thicknessLabel = new Text(`${layer.thickness}mm`, {
-        left: currentX + layerWidth / 2,
-        top: startY - 15,
-        fontSize: 9,
-        fill: '#64748b',
-        originX: 'center',
-        selectable: false,
-        data: { type: 'layer', index },
-      });
+      construction.layers.forEach((layer, index) => {
+        const layerHeight = Math.max(layer.thickness * scale, 15);
+        const { color } = getMaterialStyle(layer.material.category);
 
-      // Bridging indication
-      if (layer.bridging) {
-        const bridgeWidth = 4;
-        const spacing = 40;
-        for (let y = startY + 20; y < startY + layerHeight - 20; y += spacing) {
-          const bridge = new Rect({
-            left: currentX + (layerWidth - bridgeWidth) / 2,
-            top: y,
-            width: bridgeWidth,
-            height: 30,
-            fill: '#f59e0b',
-            selectable: false,
-            data: { type: 'layer', index },
-          });
-          canvas.add(bridge);
+        // Layer rectangle
+        const rect = new Rect({
+          left: startX,
+          top: currentY,
+          width: layerWidth,
+          height: layerHeight,
+          fill: color,
+          stroke: '#333',
+          strokeWidth: 1,
+          selectable: false,
+          data: { type: 'layer', index },
+        });
+
+        // Layer label
+        const label = new Text(`${layer.thickness}mm ${layer.material.name}`, {
+          left: startX + layerWidth / 2,
+          top: currentY + layerHeight / 2,
+          fontSize: 10,
+          fill: '#000',
+          originX: 'center',
+          originY: 'center',
+          selectable: false,
+          data: { type: 'layer', index },
+        });
+
+        // Bridging indication
+        if (layer.bridging) {
+          const bridgeHeight = 3;
+          const spacing = 60;
+          for (let x = startX + 30; x < startX + layerWidth - 30; x += spacing) {
+            const bridge = new Rect({
+              left: x,
+              top: currentY + (layerHeight - bridgeHeight) / 2,
+              width: 20,
+              height: bridgeHeight,
+              fill: '#f59e0b',
+              selectable: false,
+              data: { type: 'layer', index },
+            });
+            canvas.add(bridge);
+          }
         }
-      }
 
-      canvas.add(rect, label, thicknessLabel);
-      currentX += layerWidth;
-    });
+        canvas.add(rect, label);
+        currentY += layerHeight;
+      });
 
-    // Internal/External labels
-    const intLabel = new Text('INTERNAL', {
-      left: 50,
-      top: startY + layerHeight / 2,
-      fontSize: 11,
-      fill: '#22c55e',
-      angle: -90,
-      originX: 'center',
-      originY: 'center',
-      selectable: false,
-      data: { type: 'layer' },
-    });
+      // "Inner surface" label at bottom
+      const innerLabel = new Text('Inner Surface (Room)', {
+        left: startX + layerWidth / 2,
+        top: currentY + 15,
+        fontSize: 11,
+        fill: '#22c55e',
+        originX: 'center',
+        selectable: false,
+        data: { type: 'layer' },
+      });
+      canvas.add(innerLabel);
+    } else {
+      // Vertical wall layout
+      const layerHeight = 280;
+      let currentX = startX;
 
-    const extLabel = new Text('EXTERNAL', {
-      left: currentX + 50,
-      top: startY + layerHeight / 2,
-      fontSize: 11,
-      fill: '#3b82f6',
-      angle: -90,
-      originX: 'center',
-      originY: 'center',
-      selectable: false,
-      data: { type: 'layer' },
-    });
+      // "Internal" label
+      const intLabel = new Text('INTERNAL', {
+        left: 50,
+        top: startY + layerHeight / 2,
+        fontSize: 11,
+        fill: '#22c55e',
+        angle: -90,
+        originX: 'center',
+        originY: 'center',
+        selectable: false,
+        data: { type: 'layer' },
+      });
+      canvas.add(intLabel);
 
-    canvas.add(intLabel, extLabel);
+      construction.layers.forEach((layer, index) => {
+        const layerWidth = Math.max(layer.thickness * scale, 20);
+        const { color } = getMaterialStyle(layer.material.category);
+
+        // Main layer rectangle
+        const rect = new Rect({
+          left: currentX,
+          top: startY,
+          width: layerWidth,
+          height: layerHeight,
+          fill: color,
+          stroke: '#333',
+          strokeWidth: 1,
+          selectable: false,
+          data: { type: 'layer', index },
+        });
+
+        // Layer label (material name)
+        const label = new Text(layer.material.name.split(' ').slice(0, 2).join(' '), {
+          left: currentX + layerWidth / 2,
+          top: startY + layerHeight + 10,
+          fontSize: 9,
+          fill: '#94a3b8',
+          originX: 'center',
+          selectable: false,
+          data: { type: 'layer', index },
+        });
+
+        // Thickness label
+        const thicknessLabel = new Text(`${layer.thickness}mm`, {
+          left: currentX + layerWidth / 2,
+          top: startY - 15,
+          fontSize: 9,
+          fill: '#64748b',
+          originX: 'center',
+          selectable: false,
+          data: { type: 'layer', index },
+        });
+
+        // Bridging indication
+        if (layer.bridging) {
+          const bridgeWidth = 4;
+          const spacing = 40;
+          for (let y = startY + 20; y < startY + layerHeight - 20; y += spacing) {
+            const bridge = new Rect({
+              left: currentX + (layerWidth - bridgeWidth) / 2,
+              top: y,
+              width: bridgeWidth,
+              height: 30,
+              fill: '#f59e0b',
+              selectable: false,
+              data: { type: 'layer', index },
+            });
+            canvas.add(bridge);
+          }
+        }
+
+        canvas.add(rect, label, thicknessLabel);
+        currentX += layerWidth;
+      });
+
+      // "External" label
+      const extLabel = new Text('EXTERNAL', {
+        left: currentX + 50,
+        top: startY + layerHeight / 2,
+        fontSize: 11,
+        fill: '#3b82f6',
+        angle: -90,
+        originX: 'center',
+        originY: 'center',
+        selectable: false,
+        data: { type: 'layer' },
+      });
+      canvas.add(extLabel);
+    }
+
     canvas.renderAll();
   };
 
@@ -203,7 +308,7 @@ export function JunctionCanvas({ construction, className }: JunctionCanvasProps)
     fabricCanvas.clear();
     fabricCanvas.backgroundColor = '#0c1222';
     drawGrid(fabricCanvas);
-    drawConstructionLayers(fabricCanvas, construction);
+    drawConstructionLayers(fabricCanvas, construction, viewMode);
   };
 
   const handleZoom = (delta: number) => {
@@ -212,6 +317,15 @@ export function JunctionCanvas({ construction, className }: JunctionCanvasProps)
     setZoom(newZoom);
     fabricCanvas.setZoom(newZoom);
     fabricCanvas.renderAll();
+  };
+
+  const handleViewModeChange = (mode: ViewMode) => {
+    setViewMode(mode);
+    if (mode === 'floor' && onConstructionTypeChange) {
+      onConstructionTypeChange('floor', floorType, perimeter, area);
+    } else if (onConstructionTypeChange) {
+      onConstructionTypeChange('wall');
+    }
   };
 
   return (
@@ -249,31 +363,67 @@ export function JunctionCanvas({ construction, className }: JunctionCanvasProps)
       </div>
 
       {/* Toolbar */}
-      <div className="flex items-center gap-1 p-2 border-b border-border bg-secondary/30">
+      <div className="flex items-center gap-2 p-2 border-b border-border bg-secondary/30 flex-wrap">
         <Button
-          variant={activeTool === 'select' ? 'default' : 'ghost'}
+          variant={viewMode === 'wall' ? 'default' : 'ghost'}
           size="sm"
-          onClick={() => setActiveTool('select')}
-        >
-          <MousePointer className="w-4 h-4 mr-1" />
-          Select
-        </Button>
-        <Button
-          variant={activeTool === 'wall' ? 'default' : 'ghost'}
-          size="sm"
-          onClick={() => setActiveTool('wall')}
+          onClick={() => handleViewModeChange('wall')}
         >
           <Square className="w-4 h-4 mr-1" />
           Wall
         </Button>
         <Button
-          variant={activeTool === 'floor' ? 'default' : 'ghost'}
+          variant={viewMode === 'floor' ? 'default' : 'ghost'}
           size="sm"
-          onClick={() => setActiveTool('floor')}
+          onClick={() => handleViewModeChange('floor')}
         >
           <Minus className="w-4 h-4 mr-1" />
           Floor
         </Button>
+
+        {viewMode === 'floor' && (
+          <>
+            <div className="w-px h-6 bg-border mx-2" />
+            <Select value={floorType} onValueChange={(v) => setFloorType(v as FloorType)}>
+              <SelectTrigger className="w-32 h-8 text-xs">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="ground">Ground Floor</SelectItem>
+                <SelectItem value="suspended">Suspended Floor</SelectItem>
+                <SelectItem value="solid">Solid Floor</SelectItem>
+                <SelectItem value="intermediate">Intermediate</SelectItem>
+              </SelectContent>
+            </Select>
+            
+            {floorType === 'ground' && (
+              <>
+                <div className="flex items-center gap-1 ml-2">
+                  <Label className="text-xs text-muted-foreground">P:</Label>
+                  <Input
+                    type="number"
+                    value={perimeter}
+                    onChange={(e) => setPerimeter(parseFloat(e.target.value) || 0)}
+                    className="w-16 h-8 text-xs"
+                    placeholder="m"
+                  />
+                  <span className="text-xs text-muted-foreground">m</span>
+                </div>
+                <div className="flex items-center gap-1">
+                  <Label className="text-xs text-muted-foreground">A:</Label>
+                  <Input
+                    type="number"
+                    value={area}
+                    onChange={(e) => setArea(parseFloat(e.target.value) || 0)}
+                    className="w-16 h-8 text-xs"
+                    placeholder="m²"
+                  />
+                  <span className="text-xs text-muted-foreground">m²</span>
+                </div>
+              </>
+            )}
+          </>
+        )}
       </div>
 
       {/* Canvas */}
@@ -283,7 +433,10 @@ export function JunctionCanvas({ construction, className }: JunctionCanvasProps)
 
       {/* Info Bar */}
       <div className="flex items-center justify-between px-4 py-2 border-t border-border bg-secondary/20 text-xs text-muted-foreground">
-        <span>{construction.layers.length} layers | Total thickness: {construction.layers.reduce((s, l) => s + l.thickness, 0)}mm</span>
+        <span>
+          {construction.layers.length} layers | Total: {construction.layers.reduce((s, l) => s + l.thickness, 0)}mm
+          {viewMode === 'floor' && floorType === 'ground' && ` | P/A: ${(perimeter / area).toFixed(3)}`}
+        </span>
         <span>Grid: 20mm</span>
       </div>
     </div>
