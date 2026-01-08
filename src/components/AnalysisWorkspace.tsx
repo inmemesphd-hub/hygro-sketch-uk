@@ -943,15 +943,18 @@ export default function AnalysisWorkspace() {
         pdf.setLineWidth(0.5);
         pdf.rect(diagramX, tempDiagramY, diagramWidth, tempDiagramHeight);
         
-        // Draw material layer backgrounds for temp chart
-        let layerStartX = diagramX;
+        // Draw material layer backgrounds for temp chart - EXTERNAL on LEFT, INTERNAL on RIGHT
         const plotWidth = diagramWidth;
         const narrowTempLayers: {name: string, centerX: number, bottomY: number}[] = [];
         
-        buildup.layers.forEach((layer, idx) => {
+        // Reverse layers for external-left to internal-right orientation
+        const reversedLayers = [...buildup.layers].reverse();
+        let layerStartX = diagramX;
+        
+        reversedLayers.forEach((layer, idx) => {
           const sdValue = (layer.thickness / 1000) * layer.material.vapourResistivity;
           const layerWidth = Math.max((sdValue / maxSd) * plotWidth, 2); // Minimum 2mm width
-          const layerColor = getLayerColor(layer.material.category, idx);
+          const layerColor = getLayerColor(layer.material.category, reversedLayers.length - 1 - idx);
           
           // Draw colored background rectangle
           pdf.setFillColor(...layerColor);
@@ -1000,11 +1003,11 @@ export default function AnalysisWorkspace() {
           pdf.text(temp.toFixed(0), diagramX - 3, yPos + 1, { align: 'right' });
         }
         
-        // Scale functions for temperature
-        const scaleXT = (pos: number) => diagramX + (pos / maxPosition) * diagramWidth;
+        // Scale functions for temperature - FLIPPED: External (pos 0) on LEFT, Internal (maxPos) on RIGHT
+        const scaleXT = (pos: number) => diagramX + diagramWidth - (pos / maxPosition) * diagramWidth;
         const scaleYT = (temp: number) => tempDiagramY + tempDiagramHeight - ((temp - tempMin) / tempRange) * tempDiagramHeight;
         
-        // Draw temperature line (green)
+        // Draw temperature line (green) - ensure full coverage from external to internal
         if (tempData && tempData.length > 1) {
           pdf.setDrawColor(34, 139, 34); // Forest green
           pdf.setLineWidth(1);
@@ -1013,6 +1016,13 @@ export default function AnalysisWorkspace() {
               scaleXT(tempData[i-1].position), scaleYT(tempData[i-1].temperature),
               scaleXT(tempData[i].position), scaleYT(tempData[i].temperature)
             );
+          }
+          // Extend line to diagram edges if data doesn't cover full range
+          if (tempData[0].position > 0) {
+            pdf.line(diagramX + diagramWidth, scaleYT(tempData[0].temperature), scaleXT(tempData[0].position), scaleYT(tempData[0].temperature));
+          }
+          if (tempData[tempData.length - 1].position < maxPosition) {
+            pdf.line(scaleXT(tempData[tempData.length - 1].position), scaleYT(tempData[tempData.length - 1].temperature), diagramX, scaleYT(tempData[tempData.length - 1].temperature));
           }
         }
         
@@ -1027,13 +1037,13 @@ export default function AnalysisWorkspace() {
         pdf.setLineWidth(0.5);
         pdf.rect(diagramX, pressureDiagramY, diagramWidth, pressureDiagramHeight);
         
-        // Draw material layer backgrounds for pressure chart
+        // Draw material layer backgrounds for pressure chart - EXTERNAL on LEFT, INTERNAL on RIGHT
         layerStartX = diagramX;
         const narrowPressureLayers: {name: string, centerX: number, bottomY: number}[] = [];
-        buildup.layers.forEach((layer, idx) => {
+        reversedLayers.forEach((layer, idx) => {
           const sdValue = (layer.thickness / 1000) * layer.material.vapourResistivity;
           const layerWidth = Math.max((sdValue / maxSd) * plotWidth, 2);
-          const layerColor = getLayerColor(layer.material.category, idx);
+          const layerColor = getLayerColor(layer.material.category, reversedLayers.length - 1 - idx);
           
           // Draw colored background rectangle
           pdf.setFillColor(...layerColor);
@@ -1082,11 +1092,11 @@ export default function AnalysisWorkspace() {
           pdf.text(Math.round(pressure).toString(), diagramX - 3, yPos + 1, { align: 'right' });
         }
         
-        // Scale functions for pressure
-        const scaleX = (pos: number) => diagramX + (pos / maxPosition) * diagramWidth;
+        // Scale functions for pressure - FLIPPED: External (pos 0) on LEFT, Internal (maxPos) on RIGHT
+        const scaleX = (pos: number) => diagramX + diagramWidth - (pos / maxPosition) * diagramWidth;
         const scaleY = (pressure: number) => pressureDiagramY + pressureDiagramHeight - ((pressure - minPressure) / pressureRange) * pressureDiagramHeight;
         
-        // Draw saturation pressure line (blue)
+        // Draw saturation pressure line (blue) - ensure full coverage
         pdf.setDrawColor(59, 130, 246);
         pdf.setLineWidth(1);
         for (let i = 1; i < vpData.length; i++) {
@@ -1095,8 +1105,15 @@ export default function AnalysisWorkspace() {
             scaleX(vpData[i].position), scaleY(vpData[i].saturation)
           );
         }
+        // Extend to diagram edges
+        if (vpData[0].position > 0) {
+          pdf.line(diagramX + diagramWidth, scaleY(vpData[0].saturation), scaleX(vpData[0].position), scaleY(vpData[0].saturation));
+        }
+        if (vpData[vpData.length - 1].position < maxPosition) {
+          pdf.line(scaleX(vpData[vpData.length - 1].position), scaleY(vpData[vpData.length - 1].saturation), diagramX, scaleY(vpData[vpData.length - 1].saturation));
+        }
         
-        // Draw vapour pressure line (red)
+        // Draw vapour pressure line (red) - ensure full coverage
         pdf.setDrawColor(239, 68, 68);
         pdf.setLineWidth(1);
         for (let i = 1; i < vpData.length; i++) {
@@ -1104,6 +1121,13 @@ export default function AnalysisWorkspace() {
             scaleX(vpData[i-1].position), scaleY(vpData[i-1].pressure),
             scaleX(vpData[i].position), scaleY(vpData[i].pressure)
           );
+        }
+        // Extend to diagram edges
+        if (vpData[0].position > 0) {
+          pdf.line(diagramX + diagramWidth, scaleY(vpData[0].pressure), scaleX(vpData[0].position), scaleY(vpData[0].pressure));
+        }
+        if (vpData[vpData.length - 1].position < maxPosition) {
+          pdf.line(scaleX(vpData[vpData.length - 1].position), scaleY(vpData[vpData.length - 1].pressure), diagramX, scaleY(vpData[vpData.length - 1].pressure));
         }
         
         // Find and mark ALL condensation points (where lines cross/meet)
@@ -1219,20 +1243,32 @@ export default function AnalysisWorkspace() {
           y += 8;
         }
         
-        // Draw compact leader lines for narrow layers - no title, just below diagram
+        // Draw compact leader lines for narrow layers - no title, non-overlapping, full text
         if (narrowPressureLayers.length > 0) {
+          const leaderBaseY = pressureDiagramY + pressureDiagramHeight + 14;
+          const labelSpacing = Math.max(25, (diagramWidth - 20) / narrowPressureLayers.length);
+          
           narrowPressureLayers.forEach((item, idx) => {
-            // Short vertical leader from layer
+            // Calculate staggered label position to avoid overlap
+            const labelX = diagramX + 5 + (idx * labelSpacing);
+            const labelY = leaderBaseY + (idx % 2) * 6; // Stagger vertically
+            
+            // Short vertical leader from layer center
             pdf.setDrawColor(100, 100, 100);
             pdf.setLineWidth(0.2);
-            const leaderEndY = item.bottomY + 4 + (idx % 2) * 3;
-            pdf.line(item.centerX, item.bottomY, item.centerX, leaderEndY);
+            pdf.line(item.centerX, item.bottomY, item.centerX, leaderBaseY - 2);
             
-            // Compact label at end of leader
-            pdf.setFontSize(4);
+            // Horizontal line to label
+            pdf.line(item.centerX, leaderBaseY - 2, labelX, leaderBaseY - 2);
+            pdf.line(labelX, leaderBaseY - 2, labelX, labelY - 2);
+            
+            // Full text label with larger font - wrap if needed
+            pdf.setFontSize(5);
             pdf.setTextColor(60, 60, 60);
-            const shortLabel = item.name.length > 10 ? item.name.slice(0, 8) + '..' : item.name;
-            pdf.text(shortLabel, item.centerX + 1, leaderEndY + 2);
+            const wrappedText = pdf.splitTextToSize(item.name, 22);
+            wrappedText.forEach((line: string, lineIdx: number) => {
+              pdf.text(line, labelX + 1, labelY + (lineIdx * 3));
+            });
           });
         }
 
