@@ -72,6 +72,7 @@ export default function AnalysisWorkspace() {
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [exportFormat, setExportFormat] = useState<'pdf' | 'word'>('pdf');
+  const [selectedGlaserMonth, setSelectedGlaserMonth] = useState<string>('worst');
   
   const glastaDiagramRef = useRef<HTMLDivElement>(null);
 
@@ -169,16 +170,20 @@ export default function AnalysisWorkspace() {
     pdf.setFont('helvetica', 'bold');
     pdf.setFontSize(14);
     pdf.setTextColor(...colors.header);
-    pdf.text('Construction Details', margin, y);
+    pdf.text('Construction Details - Cross Section', margin, y);
+    
+    y += 8;
+    
+    // Labels for surfaces
+    pdf.setFontSize(9);
+    pdf.setTextColor(...colors.primary);
+    pdf.text('Outer Surface', margin, y + 5);
     
     y += 10;
     
-    // Draw construction cross-section
-    const sectionHeight = 60;
-    const sectionY = y;
-    let sectionX = margin;
-    const totalThickness = construction.layers.reduce((sum, l) => sum + l.thickness, 0);
-    const scale = contentWidth / totalThickness;
+    // Draw construction cross-section with labels (horizontal like reference image)
+    const sectionStartY = y;
+    const layerWidth = contentWidth;
     
     // Material patterns and colors
     const getMaterialPattern = (category: string): { color: [number, number, number]; pattern: string } => {
@@ -186,7 +191,7 @@ export default function AnalysisWorkspace() {
         case 'masonry':
           return { color: [205, 92, 92], pattern: 'brick' };
         case 'insulation':
-          return { color: [255, 223, 186], pattern: 'dots' };
+          return { color: [255, 200, 150], pattern: 'dots' };
         case 'concrete':
           return { color: [169, 169, 169], pattern: 'solid' };
         case 'timber':
@@ -199,69 +204,83 @@ export default function AnalysisWorkspace() {
           return { color: [192, 192, 192], pattern: 'metallic' };
         case 'airgap':
           return { color: [240, 248, 255], pattern: 'air' };
+        case 'render':
+          return { color: [222, 184, 135], pattern: 'solid' };
+        case 'cladding':
+          return { color: [139, 69, 19], pattern: 'wood' };
         default:
           return { color: [200, 200, 200], pattern: 'solid' };
       }
     };
     
-    for (const layer of construction.layers) {
-      const layerWidth = layer.thickness * scale;
+    let currentY = y;
+    const totalThickness = construction.layers.reduce((sum, l) => sum + l.thickness, 0);
+    const maxLayerHeight = 80; // Max height for the cross-section
+    const scale = Math.min(0.2, maxLayerHeight / totalThickness);
+    
+    construction.layers.forEach((layer, idx) => {
+      const layerHeight = Math.max(layer.thickness * scale, 12);
       const { color, pattern } = getMaterialPattern(layer.material.category);
       
+      // Draw layer rectangle
       pdf.setFillColor(...color);
-      pdf.rect(sectionX, sectionY, layerWidth, sectionHeight, 'F');
+      pdf.rect(margin, currentY, layerWidth, layerHeight, 'F');
       
       // Add patterns
       pdf.setDrawColor(100, 100, 100);
       pdf.setLineWidth(0.1);
       
       if (pattern === 'brick') {
-        // Brick pattern
-        for (let py = sectionY; py < sectionY + sectionHeight; py += 6) {
-          pdf.line(sectionX, py, sectionX + layerWidth, py);
-          const offset = (Math.floor((py - sectionY) / 6) % 2) * (layerWidth / 3);
-          for (let px = sectionX + offset; px < sectionX + layerWidth; px += (layerWidth / 3)) {
-            pdf.line(px, py, px, py + 6);
+        for (let py = currentY; py < currentY + layerHeight; py += 3) {
+          pdf.line(margin, py, margin + layerWidth, py);
+          const offset = (Math.floor((py - currentY) / 3) % 2) * 10;
+          for (let px = margin + offset; px < margin + layerWidth; px += 20) {
+            pdf.line(px, py, px, Math.min(py + 3, currentY + layerHeight));
           }
         }
       } else if (pattern === 'dots') {
-        // Insulation dots
-        for (let py = sectionY + 3; py < sectionY + sectionHeight; py += 6) {
-          for (let px = sectionX + 3; px < sectionX + layerWidth; px += 6) {
+        for (let py = currentY + 2; py < currentY + layerHeight - 1; py += 4) {
+          for (let px = margin + 3; px < margin + layerWidth - 2; px += 6) {
             pdf.circle(px, py, 0.5, 'F');
           }
-        }
-      } else if (pattern === 'wood') {
-        // Wood grain
-        for (let py = sectionY + 4; py < sectionY + sectionHeight; py += 8) {
-          pdf.setDrawColor(139, 90, 43);
-          const curve = Math.sin(py * 0.1) * 2;
-          pdf.line(sectionX, py + curve, sectionX + layerWidth, py + curve);
         }
       }
       
       // Bridging indication
       if (layer.bridging) {
-        pdf.setFillColor(100, 100, 100);
-        const studWidth = layerWidth * 0.1;
-        const studSpacing = layerWidth / 3;
-        for (let sx = sectionX + studSpacing; sx < sectionX + layerWidth - studWidth; sx += studSpacing) {
-          pdf.rect(sx, sectionY, studWidth, sectionHeight, 'F');
+        pdf.setFillColor(80, 80, 80);
+        const studWidth = 3;
+        const studSpacing = 30;
+        for (let sx = margin + 15; sx < margin + layerWidth - 10; sx += studSpacing) {
+          pdf.rect(sx, currentY, studWidth, layerHeight, 'F');
         }
       }
       
       // Border
       pdf.setDrawColor(...colors.border);
       pdf.setLineWidth(0.3);
-      pdf.rect(sectionX, sectionY, layerWidth, sectionHeight);
+      pdf.rect(margin, currentY, layerWidth, layerHeight);
       
-      sectionX += layerWidth;
-    }
+      // Layer label inside the layer
+      pdf.setFontSize(7);
+      pdf.setTextColor(0, 0, 0);
+      let labelText = `${layer.thickness}mm ${layer.material.name}`;
+      if (layer.bridging) {
+        labelText += ` (${layer.bridging.percentage}% ${layer.bridging.material.name})`;
+      }
+      pdf.text(labelText, margin + 3, currentY + layerHeight / 2 + 2);
+      
+      currentY += layerHeight;
+    });
     
-    // Layer labels
-    y = sectionY + sectionHeight + 15;
+    // Inner surface label
+    pdf.setFontSize(9);
+    pdf.setTextColor(...colors.success);
+    pdf.text('Inner Surface', margin, currentY + 8);
     
-    // Construction table
+    y = currentY + 15;
+    
+    // Construction table with correct Greek symbols
     pdf.setFillColor(...colors.primary);
     pdf.rect(margin, y, contentWidth, 8, 'F');
     pdf.setTextColor(255, 255, 255);
@@ -270,8 +289,9 @@ export default function AnalysisWorkspace() {
     pdf.text('Layer', margin + 2, y + 5.5);
     pdf.text('Material', margin + 20, y + 5.5);
     pdf.text('Thickness (mm)', margin + 90, y + 5.5);
-    pdf.text('λ (W/mK)', margin + 120, y + 5.5);
-    pdf.text('μ (MNs/gm)', margin + 145, y + 5.5);
+    // Use proper text for symbols since jsPDF doesn't support Greek well
+    pdf.text('Conductivity', margin + 120, y + 5.5);
+    pdf.text('Vapour Res.', margin + 148, y + 5.5);
     
     y += 8;
     pdf.setFont('helvetica', 'normal');
@@ -289,9 +309,9 @@ export default function AnalysisWorkspace() {
         materialName += ` (${layer.bridging.percentage}% ${layer.bridging.material.name})`;
       }
       pdf.text(materialName.substring(0, 40), margin + 20, y + 5);
-      pdf.text(layer.thickness.toString(), margin + 90, y + 5);
-      pdf.text(layer.material.thermalConductivity.toString(), margin + 120, y + 5);
-      pdf.text(layer.material.vapourResistivity.toString(), margin + 145, y + 5);
+      pdf.text(layer.thickness.toString(), margin + 95, y + 5);
+      pdf.text(`${layer.material.thermalConductivity} W/mK`, margin + 120, y + 5);
+      pdf.text(`${layer.material.vapourResistivity} MNs/gm`, margin + 148, y + 5);
       
       y += 7;
     });
@@ -490,8 +510,8 @@ export default function AnalysisWorkspace() {
             <th>Layer</th>
             <th>Material</th>
             <th>Thickness (mm)</th>
-            <th>λ (W/mK)</th>
-            <th>μ (MNs/gm)</th>
+            <th>Conductivity (W/mK)</th>
+            <th>Vapour Resistivity (MNs/gm)</th>
           </tr>
           ${construction.layers.map((layer, i) => `
             <tr>
@@ -730,16 +750,21 @@ export default function AnalysisWorkspace() {
               <motion.div
                 initial={{ opacity: 0, y: 20 }}
                 animate={{ opacity: 1, y: 0 }}
-                className="flex-1 grid grid-cols-1 lg:grid-cols-2 gap-4"
+                className="flex-1 grid grid-cols-1 lg:grid-cols-2 gap-4 min-h-0"
               >
-                <div className="space-y-4">
+                <div className="space-y-4 overflow-auto">
                   <div ref={glastaDiagramRef}>
-                    <GlastaDiagram result={analysisResult} />
+                    <GlastaDiagram 
+                      result={analysisResult} 
+                      climateData={climateData}
+                      selectedMonth={selectedGlaserMonth}
+                      onMonthChange={setSelectedGlaserMonth}
+                    />
                   </div>
                   <TemperatureProfile result={analysisResult} />
                 </div>
                 
-                <div className="space-y-4">
+                <div className="space-y-4 overflow-auto">
                   <MonthlyAccumulationChart monthlyData={analysisResult.monthlyData} />
                   <ResultsSummary 
                     result={analysisResult}

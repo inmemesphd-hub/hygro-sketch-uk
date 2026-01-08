@@ -334,35 +334,36 @@ export function ConstructionBuilder({ construction, onChange }: ConstructionBuil
                         </div>
                         
                         <div className="space-y-2">
-                          <div className="flex items-center justify-between">
+                        <div className="flex items-center justify-between">
                             <Label className="text-xs">Bridging Percentage</Label>
                             <div className="flex items-center gap-2">
                               <Input
                                 type="number"
-                                min="1"
+                                min="0.0001"
                                 max="50"
+                                step="0.0001"
                                 value={layer.bridging.percentage}
                                 onChange={(e) => {
                                   const val = parseFloat(e.target.value);
-                                  if (!isNaN(val) && val >= 1 && val <= 50) {
+                                  if (!isNaN(val) && val >= 0.0001 && val <= 50) {
                                     updateLayer(index, {
                                       bridging: { ...layer.bridging!, percentage: val }
                                     });
                                   }
                                 }}
-                                className="w-16 h-6 text-xs font-mono"
+                                className="w-20 h-6 text-xs font-mono"
                               />
                               <span className="text-xs text-muted-foreground">%</span>
                             </div>
                           </div>
                           <Slider
-                            value={[layer.bridging.percentage]}
+                            value={[Math.max(layer.bridging.percentage, 0.1)]}
                             onValueChange={([value]) => updateLayer(index, {
                               bridging: { ...layer.bridging!, percentage: value }
                             })}
-                            min={1}
+                            min={0.1}
                             max={50}
-                            step={1}
+                            step={0.1}
                           />
                         </div>
                       </div>
