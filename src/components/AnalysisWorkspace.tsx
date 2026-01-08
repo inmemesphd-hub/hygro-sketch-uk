@@ -11,7 +11,6 @@ import { GlastaDiagram, TemperatureProfile } from '@/components/charts/GlastaDia
 import { MonthlyAccumulationChart } from '@/components/charts/MonthlyAccumulationChart';
 import { ResultsSummary } from '@/components/ResultsSummary';
 import { ProjectManager } from '@/components/ProjectManager';
-import { ReportExportDialog, BuildupForExport } from '@/components/ReportExportDialog';
 import { useProjects, BuildupData } from '@/hooks/useProjects';
 import { useAuth } from '@/hooks/useAuth';
 import { Button } from '@/components/ui/button';
@@ -51,7 +50,6 @@ export default function AnalysisWorkspace() {
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [exportFormat, setExportFormat] = useState<'pdf' | 'word'>('pdf');
   const [selectedGlaserMonth, setSelectedGlaserMonth] = useState<string>('worst');
-  const [showExportDialog, setShowExportDialog] = useState(false);
   
   // Current buildup tracking
   const [selectedBuildupId, setSelectedBuildupId] = useState<string | null>(null);
@@ -168,63 +166,22 @@ export default function AnalysisWorkspace() {
     }, 800);
   };
 
-  // Get all buildups for export dialog
-  const getAllBuildupsForExport = (): BuildupForExport[] => {
-    const allBuildups: BuildupForExport[] = [];
-    projects.forEach(project => {
-      project.buildups.forEach(buildup => {
-        allBuildups.push({
-          id: buildup.id,
-          name: buildup.name,
-          projectName: project.name,
-        });
-      });
-    });
-    return allBuildups;
-  };
-
-  const handleOpenExportDialog = () => {
+  const exportReport = async () => {
     if (!analysisResult) return;
-    setShowExportDialog(true);
-  };
 
-  const handleExportWithSelection = async (selectedBuildupIds: string[]) => {
     if (exportFormat === 'pdf') {
-      await exportPDF(selectedBuildupIds);
+      await exportPDF();
     } else {
-      await exportWord(selectedBuildupIds);
+      await exportWord();
     }
   };
 
-  // Helper function to wrap text within a max width
-  const wrapText = (pdf: jsPDF, text: string, maxWidth: number): string[] => {
-    const words = text.split(' ');
-    const lines: string[] = [];
-    let currentLine = '';
-
-    words.forEach(word => {
-      const testLine = currentLine ? `${currentLine} ${word}` : word;
-      const testWidth = pdf.getTextWidth(testLine);
-      if (testWidth > maxWidth && currentLine) {
-        lines.push(currentLine);
-        currentLine = word;
-      } else {
-        currentLine = testLine;
-      }
-    });
-    if (currentLine) {
-      lines.push(currentLine);
-    }
-    return lines;
-  };
-
-  const exportPDF = async (selectedBuildupIds: string[]) => {
+  const exportPDF = async () => {
     const pdf = new jsPDF('p', 'mm', 'a4');
     const pageWidth = pdf.internal.pageSize.getWidth();
     const pageHeight = pdf.internal.pageSize.getHeight();
     const margin = 15;
     const contentWidth = pageWidth - (margin * 2);
-    const maxTextWidth = contentWidth - 10;
     
     const colors = {
       primary: [0, 102, 153] as [number, number, number],
@@ -236,11 +193,6 @@ export default function AnalysisWorkspace() {
       border: [200, 200, 200] as [number, number, number],
       lightBg: [245, 247, 250] as [number, number, number],
     };
-
-    // Check if any surface condensation occurs
-    const hasSurfaceCondensation = analysisResult!.surfaceCondensationData?.some(
-      sd => sd.tsi < sd.minTsi
-    ) ?? false;
 
     // Cover page
     pdf.setFillColor(...colors.primary);
@@ -267,33 +219,9 @@ export default function AnalysisWorkspace() {
     pdf.setTextColor(...colors.text);
     pdf.setFontSize(11);
     pdf.setFont('helvetica', 'normal');
+    pdf.text(isPass ? 'Structure is free of condensation.' : (analysisResult!.failureReason || 'Structure fails condensation criteria.'), margin + 55, y);
     
-    // Wrap the status text
-    const statusText = isPass ? 'Structure is free of condensation risk.' : (analysisResult!.failureReason || 'Structure fails condensation criteria.');
-    const wrappedStatus = wrapText(pdf, statusText, maxTextWidth - 55);
-    wrappedStatus.forEach((line, idx) => {
-      pdf.text(line, margin + 55, y + (idx * 5));
-    });
-    
-    // Surface condensation statement (BS EN ISO 13788 compliant)
-    y = 75;
-    pdf.setFillColor(...colors.lightBg);
-    pdf.roundedRect(margin, y, contentWidth, 18, 2, 2, 'F');
-    pdf.setFontSize(9);
-    pdf.setFont('helvetica', 'bold');
-    pdf.setTextColor(...colors.header);
-    pdf.text('Surface Condensation Assessment (BS EN ISO 13788):', margin + 5, y + 7);
-    pdf.setFont('helvetica', 'normal');
-    pdf.setTextColor(...colors.text);
-    if (!hasSurfaceCondensation) {
-      pdf.setTextColor(...colors.success);
-      pdf.text('No surface condensation risk detected. Mould growth is unlikely under normal conditions.', margin + 5, y + 14);
-    } else {
-      pdf.setTextColor(...colors.fail);
-      pdf.text('Surface condensation risk detected. Mould growth may occur. Remedial action recommended.', margin + 5, y + 14);
-    }
-    
-    y = 100;
+    y = 85;
     pdf.setFillColor(...colors.lightBg);
     pdf.roundedRect(margin, y - 5, contentWidth, 35, 3, 3, 'F');
     
@@ -311,15 +239,19 @@ export default function AnalysisWorkspace() {
     pdf.text('BS5250 Climate Data', margin + 45, y + 19);
     pdf.text(new Date().toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' }), margin + 45, y + 26);
     
-    // Construction details with orientation based on type
-    y = 150;
+    // Construction details
+    y = 135;
     pdf.setFont('helvetica', 'bold');
     pdf.setFontSize(14);
     pdf.setTextColor(...colors.header);
-    const crossSectionTitle = constructionType === 'floor' ? 'Construction Details - Cross Section (Horizontal)' : 'Construction Details - Cross Section (Vertical)';
-    pdf.text(crossSectionTitle, margin, y);
+    pdf.text('Construction Details - Cross Section', margin, y);
     
     y += 8;
+    pdf.setFontSize(9);
+    pdf.setTextColor(...colors.primary);
+    pdf.text('Outer Surface', margin, y + 5);
+    
+    y += 10;
     
     const getMaterialPattern = (category: string): { color: [number, number, number]; pattern: string } => {
       switch (category) {
@@ -337,157 +269,77 @@ export default function AnalysisWorkspace() {
       }
     };
     
+    let currentY = y;
     const totalThickness = construction.layers.reduce((sum, l) => sum + l.thickness, 0);
+    const maxLayerHeight = 80;
+    const scale = Math.min(0.2, maxLayerHeight / totalThickness);
     
-    if (constructionType === 'floor') {
-      // Horizontal cross section for floors
-      pdf.setFontSize(9);
-      pdf.setTextColor(...colors.primary);
-      pdf.text('External (Ground)', margin, y + 5);
+    construction.layers.forEach((layer, idx) => {
+      const layerHeight = Math.max(layer.thickness * scale, 12);
+      const { color, pattern } = getMaterialPattern(layer.material.category);
       
-      y += 10;
-      let currentY = y;
-      const maxLayerHeight = 60;
-      const scale = Math.min(0.15, maxLayerHeight / totalThickness);
+      pdf.setFillColor(...color);
+      pdf.rect(margin, currentY, contentWidth, layerHeight, 'F');
       
-      construction.layers.forEach((layer, idx) => {
-        const layerHeight = Math.max(layer.thickness * scale, 10);
-        const { color, pattern } = getMaterialPattern(layer.material.category);
-        
-        pdf.setFillColor(...color);
-        pdf.rect(margin, currentY, contentWidth, layerHeight, 'F');
-        
-        pdf.setDrawColor(100, 100, 100);
-        pdf.setLineWidth(0.1);
-        
-        if (pattern === 'brick') {
-          for (let py = currentY; py < currentY + layerHeight; py += 3) {
-            pdf.line(margin, py, margin + contentWidth, py);
-          }
-        } else if (pattern === 'dots') {
-          for (let py = currentY + 2; py < currentY + layerHeight - 1; py += 4) {
-            for (let px = margin + 3; px < margin + contentWidth - 2; px += 6) {
-              pdf.circle(px, py, 0.4, 'F');
-            }
+      pdf.setDrawColor(100, 100, 100);
+      pdf.setLineWidth(0.1);
+      
+      if (pattern === 'brick') {
+        for (let py = currentY; py < currentY + layerHeight; py += 3) {
+          pdf.line(margin, py, margin + contentWidth, py);
+          const offset = (Math.floor((py - currentY) / 3) % 2) * 10;
+          for (let px = margin + offset; px < margin + contentWidth; px += 20) {
+            pdf.line(px, py, px, Math.min(py + 3, currentY + layerHeight));
           }
         }
-        
-        // Bridging indication with label
-        let bridgingNote = '';
-        if (layer.bridging) {
-          pdf.setFillColor(80, 80, 80);
-          const studWidth = 2;
-          const studSpacing = 25;
-          for (let sx = margin + 15; sx < margin + contentWidth - 10; sx += studSpacing) {
-            pdf.rect(sx, currentY, studWidth, layerHeight, 'F');
-          }
-          bridgingNote = ` [Bridging: ${layer.bridging.percentage}% ${layer.bridging.material.name}]`;
-        }
-        
-        pdf.setDrawColor(...colors.border);
-        pdf.setLineWidth(0.3);
-        pdf.rect(margin, currentY, contentWidth, layerHeight);
-        
-        pdf.setFontSize(7);
-        pdf.setTextColor(0, 0, 0);
-        const labelText = `${layer.thickness}mm ${layer.material.name}${bridgingNote}`;
-        const truncatedLabel = labelText.length > 70 ? labelText.substring(0, 67) + '...' : labelText;
-        pdf.text(truncatedLabel, margin + 3, currentY + layerHeight / 2 + 2);
-        
-        currentY += layerHeight;
-      });
-      
-      pdf.setFontSize(9);
-      pdf.setTextColor(...colors.success);
-      pdf.text('Internal (Room)', margin, currentY + 8);
-      y = currentY + 15;
-    } else {
-      // Vertical cross section for walls
-      pdf.setFontSize(9);
-      pdf.setTextColor(...colors.success);
-      pdf.text('Internal', margin, y + 5);
-      
-      y += 10;
-      const sectionHeight = 50;
-      const maxSectionWidth = contentWidth - 40;
-      const scale = Math.min(0.3, maxSectionWidth / totalThickness);
-      let currentX = margin + 20;
-      
-      construction.layers.forEach((layer, idx) => {
-        const layerWidth = Math.max(layer.thickness * scale, 15);
-        const { color, pattern } = getMaterialPattern(layer.material.category);
-        
-        pdf.setFillColor(...color);
-        pdf.rect(currentX, y, layerWidth, sectionHeight, 'F');
-        
-        pdf.setDrawColor(100, 100, 100);
-        pdf.setLineWidth(0.1);
-        
-        if (pattern === 'brick') {
-          for (let py = y; py < y + sectionHeight; py += 4) {
-            pdf.line(currentX, py, currentX + layerWidth, py);
-            const offset = (Math.floor((py - y) / 4) % 2) * 5;
-            for (let px = currentX + offset; px < currentX + layerWidth; px += 10) {
-              pdf.line(px, py, px, Math.min(py + 4, y + sectionHeight));
-            }
-          }
-        } else if (pattern === 'dots') {
-          for (let py = y + 2; py < y + sectionHeight - 1; py += 4) {
-            for (let px = currentX + 2; px < currentX + layerWidth - 1; px += 4) {
-              pdf.circle(px, py, 0.4, 'F');
-            }
+      } else if (pattern === 'dots') {
+        for (let py = currentY + 2; py < currentY + layerHeight - 1; py += 4) {
+          for (let px = margin + 3; px < margin + contentWidth - 2; px += 6) {
+            pdf.circle(px, py, 0.5, 'F');
           }
         }
-        
-        // Bridging indication
-        if (layer.bridging) {
-          pdf.setFillColor(80, 80, 80);
-          const bridgeWidth = 2;
-          const spacing = 8;
-          for (let by = y + 5; by < y + sectionHeight - 5; by += spacing) {
-            pdf.rect(currentX + (layerWidth - bridgeWidth) / 2, by, bridgeWidth, 4, 'F');
-          }
-        }
-        
-        pdf.setDrawColor(...colors.border);
-        pdf.setLineWidth(0.3);
-        pdf.rect(currentX, y, layerWidth, sectionHeight);
-        
-        // Layer label below
-        pdf.setFontSize(6);
-        pdf.setTextColor(0, 0, 0);
-        const shortName = layer.material.name.split(' ').slice(0, 2).join(' ');
-        pdf.text(`${layer.thickness}mm`, currentX + layerWidth / 2, y + sectionHeight + 5, { align: 'center' });
-        pdf.text(shortName, currentX + layerWidth / 2, y + sectionHeight + 9, { align: 'center' });
-        if (layer.bridging) {
-          pdf.setFontSize(5);
-          pdf.setTextColor(...colors.muted);
-          pdf.text(`${layer.bridging.percentage}% bridging`, currentX + layerWidth / 2, y + sectionHeight + 13, { align: 'center' });
-        }
-        
-        currentX += layerWidth;
-      });
+      }
       
-      pdf.setFontSize(9);
-      pdf.setTextColor(...colors.primary);
-      pdf.text('External', currentX + 5, y + sectionHeight / 2);
+      if (layer.bridging) {
+        pdf.setFillColor(80, 80, 80);
+        const studWidth = 3;
+        const studSpacing = 30;
+        for (let sx = margin + 15; sx < margin + contentWidth - 10; sx += studSpacing) {
+          pdf.rect(sx, currentY, studWidth, layerHeight, 'F');
+        }
+      }
       
-      y += sectionHeight + 20;
-    }
+      pdf.setDrawColor(...colors.border);
+      pdf.setLineWidth(0.3);
+      pdf.rect(margin, currentY, contentWidth, layerHeight);
+      
+      pdf.setFontSize(7);
+      pdf.setTextColor(0, 0, 0);
+      let labelText = `${layer.thickness}mm ${layer.material.name}`;
+      if (layer.bridging) {
+        labelText += ` (${layer.bridging.percentage}% ${layer.bridging.material.name})`;
+      }
+      pdf.text(labelText, margin + 3, currentY + layerHeight / 2 + 2);
+      
+      currentY += layerHeight;
+    });
     
-    // Layer table
-    y += 5;
+    pdf.setFontSize(9);
+    pdf.setTextColor(...colors.success);
+    pdf.text('Inner Surface', margin, currentY + 8);
+    
+    y = currentY + 15;
+    
     pdf.setFillColor(...colors.primary);
     pdf.rect(margin, y, contentWidth, 8, 'F');
     pdf.setTextColor(255, 255, 255);
     pdf.setFontSize(8);
     pdf.setFont('helvetica', 'bold');
     pdf.text('Layer', margin + 2, y + 5.5);
-    pdf.text('Material', margin + 15, y + 5.5);
-    pdf.text('Thick. (mm)', margin + 85, y + 5.5);
-    pdf.text('Conductivity', margin + 110, y + 5.5);
-    pdf.text('Vapour Res.', margin + 140, y + 5.5);
-    pdf.text('Bridging', margin + 165, y + 5.5);
+    pdf.text('Material', margin + 20, y + 5.5);
+    pdf.text('Thickness (mm)', margin + 90, y + 5.5);
+    pdf.text('Conductivity', margin + 120, y + 5.5);
+    pdf.text('Vapour Res.', margin + 148, y + 5.5);
     
     y += 8;
     pdf.setFont('helvetica', 'normal');
@@ -498,14 +350,16 @@ export default function AnalysisWorkspace() {
       pdf.setFillColor(...(rowColor as [number, number, number]));
       pdf.rect(margin, y, contentWidth, 7, 'F');
       
-      pdf.setFontSize(7);
+      pdf.setFontSize(8);
       pdf.text(`${i + 1}`, margin + 2, y + 5);
-      const materialName = layer.material.name.substring(0, 35);
-      pdf.text(materialName, margin + 15, y + 5);
-      pdf.text(layer.thickness.toString(), margin + 90, y + 5);
-      pdf.text(`${layer.material.thermalConductivity}`, margin + 115, y + 5);
-      pdf.text(`${layer.material.vapourResistivity}`, margin + 145, y + 5);
-      pdf.text(layer.bridging ? `${layer.bridging.percentage}%` : '-', margin + 170, y + 5);
+      let materialName = layer.material.name;
+      if (layer.bridging) {
+        materialName += ` (${layer.bridging.percentage}% ${layer.bridging.material.name})`;
+      }
+      pdf.text(materialName.substring(0, 40), margin + 20, y + 5);
+      pdf.text(layer.thickness.toString(), margin + 95, y + 5);
+      pdf.text(`${layer.material.thermalConductivity} W/mK`, margin + 120, y + 5);
+      pdf.text(`${layer.material.vapourResistivity} MNs/gm`, margin + 148, y + 5);
       
       y += 7;
     });
@@ -518,12 +372,12 @@ export default function AnalysisWorkspace() {
     pdf.setFontSize(10);
     pdf.text('U-Value (with bridging):', margin + 5, y + 8);
     pdf.setTextColor(...colors.primary);
-    pdf.text(`${analysisResult!.uValue.toFixed(3)} W/m²K`, margin + 55, y + 8);
+    pdf.text(`${analysisResult!.uValue.toFixed(3)} W/m2K`, margin + 55, y + 8);
     
     pdf.setTextColor(...colors.text);
     pdf.text('U-Value (without bridging):', margin + 5, y + 16);
     pdf.setTextColor(...colors.muted);
-    pdf.text(`${(analysisResult!.uValueWithoutBridging || analysisResult!.uValue).toFixed(3)} W/m²K`, margin + 60, y + 16);
+    pdf.text(`${(analysisResult!.uValueWithoutBridging || analysisResult!.uValue).toFixed(3)} W/m2K`, margin + 60, y + 16);
     
     // Results page
     pdf.addPage();
@@ -543,8 +397,8 @@ export default function AnalysisWorkspace() {
     pdf.setFontSize(7);
     pdf.setFont('helvetica', 'bold');
     
-    const cols = ['Month', 'Ext Temp', 'Ext RH', 'Int Temp', 'Int RH', 'fRsi,min', 'Min Tsi', 'Tsi', 'Status'];
-    const colWidths = [18, 18, 18, 18, 18, 20, 18, 18, 30];
+    const cols = ['Month', 'Ext Temp', 'Ext RH (%)', 'Int Temp', 'Int RH (%)', 'Min Temp Factor', 'Min Tsi', 'Tsi'];
+    const colWidths = [20, 20, 22, 20, 22, 28, 22, 22];
     let colX = margin;
     cols.forEach((col, i) => {
       pdf.text(col, colX + 2, y + 5.5);
@@ -562,11 +416,8 @@ export default function AnalysisWorkspace() {
       pdf.rect(margin, y, contentWidth, 6, 'F');
       
       const sd = surfaceData[i];
-      const isSafe = sd ? sd.tsi >= sd.minTsi : true;
-      
       colX = margin;
-      pdf.setFontSize(6);
-      pdf.setTextColor(...colors.text);
+      pdf.setFontSize(7);
       pdf.text(month.month.substring(0, 3), colX + 2, y + 4.5);
       colX += colWidths[0];
       pdf.text(month.externalTemp.toFixed(1), colX + 2, y + 4.5);
@@ -582,32 +433,11 @@ export default function AnalysisWorkspace() {
       pdf.text(sd?.minTsi.toFixed(1) || '-', colX + 2, y + 4.5);
       colX += colWidths[6];
       pdf.text(sd?.tsi.toFixed(1) || '-', colX + 2, y + 4.5);
-      colX += colWidths[7];
-      pdf.setTextColor(...(isSafe ? colors.success : colors.fail));
-      pdf.text(isSafe ? 'No risk' : 'Risk', colX + 2, y + 4.5);
       
       y += 6;
     });
     
-    // Surface condensation summary
-    y += 8;
-    pdf.setFillColor(...colors.lightBg);
-    pdf.roundedRect(margin, y, contentWidth, 16, 2, 2, 'F');
-    pdf.setFont('helvetica', 'bold');
-    pdf.setFontSize(9);
-    pdf.setTextColor(...colors.header);
-    pdf.text('Surface Condensation Assessment per BS EN ISO 13788:', margin + 5, y + 6);
-    pdf.setFont('helvetica', 'normal');
-    pdf.setFontSize(8);
-    if (!hasSurfaceCondensation) {
-      pdf.setTextColor(...colors.success);
-      pdf.text('No surface condensation occurs. Mould growth is unlikely under the assessed conditions.', margin + 5, y + 12);
-    } else {
-      pdf.setTextColor(...colors.fail);
-      pdf.text('Surface condensation risk detected in one or more months. Remedial action required per Approved Document C.', margin + 5, y + 12);
-    }
-    
-    y += 24;
+    y += 10;
     pdf.setFont('helvetica', 'bold');
     pdf.setFontSize(12);
     pdf.setTextColor(...colors.header);
@@ -619,10 +449,10 @@ export default function AnalysisWorkspace() {
     pdf.setTextColor(255, 255, 255);
     pdf.setFontSize(7);
     pdf.text('Month', margin + 2, y + 5.5);
-    pdf.text('Condensation (g/m²)', margin + 25, y + 5.5);
-    pdf.text('Evaporation (g/m²)', margin + 65, y + 5.5);
-    pdf.text('Net (g/m²)', margin + 105, y + 5.5);
-    pdf.text('Cumulative (g/m²)', margin + 135, y + 5.5);
+    pdf.text('Condensation (g/m2)', margin + 30, y + 5.5);
+    pdf.text('Evaporation (g/m2)', margin + 70, y + 5.5);
+    pdf.text('Net (g/m2)', margin + 110, y + 5.5);
+    pdf.text('Cumulative (g/m2)', margin + 140, y + 5.5);
     
     y += 8;
     pdf.setFont('helvetica', 'normal');
@@ -635,15 +465,15 @@ export default function AnalysisWorkspace() {
       pdf.setTextColor(...colors.text);
       pdf.setFontSize(7);
       pdf.text(data.month.substring(0, 3), margin + 2, y + 4.5);
-      pdf.text(data.condensationAmount.toFixed(1), margin + 35, y + 4.5);
-      pdf.text(data.evaporationAmount.toFixed(1), margin + 75, y + 4.5);
+      pdf.text(data.condensationAmount.toFixed(1), margin + 30, y + 4.5);
+      pdf.text(data.evaporationAmount.toFixed(1), margin + 70, y + 4.5);
       
       const netColor = data.netAccumulation > 0 ? colors.fail : colors.success;
       pdf.setTextColor(...netColor);
       pdf.text(data.netAccumulation.toFixed(1), margin + 110, y + 4.5);
       
       pdf.setTextColor(...colors.text);
-      pdf.text(data.cumulativeAccumulation.toFixed(1), margin + 145, y + 4.5);
+      pdf.text(data.cumulativeAccumulation.toFixed(1), margin + 140, y + 4.5);
       
       y += 6;
     });
@@ -656,7 +486,7 @@ export default function AnalysisWorkspace() {
     pdf.setTextColor(255, 255, 255);
     pdf.setFontSize(12);
     pdf.setFont('helvetica', 'bold');
-    pdf.text('Glaser Diagram - Temperature and Vapour Pressure Profile', margin, 10);
+    pdf.text('Glaser Diagram', margin, 10);
     
     if (glastaDiagramRef.current) {
       try {
@@ -673,22 +503,17 @@ export default function AnalysisWorkspace() {
     
     pdf.setFontSize(8);
     pdf.setTextColor(...colors.muted);
-    const footerLines = wrapText(pdf, 
-      'Analysis performed in accordance with BS EN ISO 13788, BS EN 15026, and Approved Document C of the UK Building Regulations. Temperature profile shows gradient from external to internal surface through each construction layer.',
-      contentWidth
+    pdf.text(
+      'Analysis performed in accordance with BS EN ISO 13788, BS EN 15026, and Approved Document C of the UK Building Regulations.',
+      margin,
+      pageHeight - 10
     );
-    footerLines.forEach((line, idx) => {
-      pdf.text(line, margin, pageHeight - 15 + (idx * 4));
-    });
     
     pdf.save('condensation-analysis-report.pdf');
   };
 
-  const exportWord = async (selectedBuildupIds: string[]) => {
+  const exportWord = async () => {
     const isPass = analysisResult!.overallResult === 'pass';
-    const hasSurfaceCondensation = analysisResult!.surfaceCondensationData?.some(
-      sd => sd.tsi < sd.minTsi
-    ) ?? false;
     
     const htmlContent = `
       <!DOCTYPE html>
@@ -696,19 +521,16 @@ export default function AnalysisWorkspace() {
       <head>
         <meta charset="utf-8">
         <style>
-          body { font-family: Arial, sans-serif; font-size: 11pt; color: #333; max-width: 800px; margin: 0 auto; padding: 20px; }
+          body { font-family: Arial, sans-serif; font-size: 11pt; color: #333; max-width: 800px; margin: 0 auto; }
           h1 { color: #006699; border-bottom: 2px solid #006699; padding-bottom: 10px; }
           h2 { color: #2b3948; margin-top: 30px; }
           table { border-collapse: collapse; width: 100%; margin: 15px 0; }
           th { background-color: #006699; color: white; padding: 8px; text-align: left; }
-          td { border: 1px solid #ddd; padding: 8px; word-wrap: break-word; max-width: 200px; }
+          td { border: 1px solid #ddd; padding: 8px; }
           tr:nth-child(even) { background-color: #f5f7fa; }
           .pass { color: #008000; font-weight: bold; }
           .fail { color: #dc3545; font-weight: bold; }
           .summary-box { background-color: #f5f7fa; padding: 15px; border-radius: 5px; margin: 20px 0; }
-          .surface-status { padding: 10px; border-radius: 5px; margin: 15px 0; }
-          .surface-pass { background-color: #d4edda; color: #155724; }
-          .surface-fail { background-color: #f8d7da; color: #721c24; }
           .footer { font-size: 9pt; color: #777; margin-top: 40px; border-top: 1px solid #ddd; padding-top: 10px; }
         </style>
       </head>
@@ -717,19 +539,12 @@ export default function AnalysisWorkspace() {
         
         <div class="summary-box">
           <p><strong>Status:</strong> <span class="${isPass ? 'pass' : 'fail'}">${isPass ? 'PASS' : 'FAIL'}</span></p>
-          <p><strong>Summary:</strong> ${isPass ? 'Structure is free of condensation risk.' : analysisResult!.failureReason}</p>
+          <p><strong>Summary:</strong> ${isPass ? 'Structure is free of condensation.' : analysisResult!.failureReason}</p>
           <p><strong>Calculation Method:</strong> ISO 13788 (Glaser Method)</p>
           <p><strong>Generated:</strong> ${new Date().toLocaleDateString('en-GB')}</p>
         </div>
         
-        <div class="surface-status ${!hasSurfaceCondensation ? 'surface-pass' : 'surface-fail'}">
-          <strong>Surface Condensation Assessment (BS EN ISO 13788):</strong><br/>
-          ${!hasSurfaceCondensation 
-            ? 'No surface condensation risk detected. Mould growth is unlikely under normal conditions.' 
-            : 'Surface condensation risk detected. Mould growth may occur. Remedial action recommended per Approved Document C.'}
-        </div>
-        
-        <h2>Construction Details ${constructionType === 'floor' ? '(Horizontal Cross Section)' : '(Vertical Cross Section)'}</h2>
+        <h2>Construction Details</h2>
         <table>
           <tr>
             <th>Layer</th>
@@ -737,16 +552,14 @@ export default function AnalysisWorkspace() {
             <th>Thickness (mm)</th>
             <th>Conductivity (W/mK)</th>
             <th>Vapour Resistivity (MNs/gm)</th>
-            <th>Bridging</th>
           </tr>
           ${construction.layers.map((layer, i) => `
             <tr>
               <td>${i + 1}</td>
-              <td>${layer.material.name}</td>
+              <td>${layer.material.name}${layer.bridging ? ` (${layer.bridging.percentage}% ${layer.bridging.material.name})` : ''}</td>
               <td>${layer.thickness}</td>
               <td>${layer.material.thermalConductivity}</td>
               <td>${layer.material.vapourResistivity}</td>
-              <td>${layer.bridging ? `${layer.bridging.percentage}% ${layer.bridging.material.name}` : '-'}</td>
             </tr>
           `).join('')}
         </table>
@@ -756,7 +569,7 @@ export default function AnalysisWorkspace() {
           <p><strong>U-Value (without bridging):</strong> ${(analysisResult!.uValueWithoutBridging || analysisResult!.uValue).toFixed(3)} W/m²K</p>
         </div>
         
-        <h2>Surface Condensation Analysis</h2>
+        <h2>Monthly Results</h2>
         <table>
           <tr>
             <th>Month</th>
@@ -764,46 +577,16 @@ export default function AnalysisWorkspace() {
             <th>Ext RH (%)</th>
             <th>Int Temp (°C)</th>
             <th>Int RH (%)</th>
-            <th>fRsi,min</th>
-            <th>Min Tsi (°C)</th>
-            <th>Tsi (°C)</th>
-            <th>Status</th>
-          </tr>
-          ${climateData.map((month, i) => {
-            const sd = analysisResult!.surfaceCondensationData?.[i];
-            const isSafe = sd ? sd.tsi >= sd.minTsi : true;
-            return `
-              <tr>
-                <td>${month.month}</td>
-                <td>${month.externalTemp}</td>
-                <td>${month.externalRH}</td>
-                <td>${month.internalTemp}</td>
-                <td>${month.internalRH}</td>
-                <td>${sd?.minTempFactor.toFixed(3) || '-'}</td>
-                <td>${sd?.minTsi.toFixed(1) || '-'}</td>
-                <td>${sd?.tsi.toFixed(1) || '-'}</td>
-                <td style="color: ${isSafe ? '#008000' : '#dc3545'}">${isSafe ? 'No risk' : 'Risk'}</td>
-              </tr>
-            `;
-          }).join('')}
-        </table>
-        
-        <h2>Monthly Moisture Accumulation</h2>
-        <table>
-          <tr>
-            <th>Month</th>
-            <th>Condensation (g/m²)</th>
-            <th>Evaporation (g/m²)</th>
-            <th>Net (g/m²)</th>
             <th>Cumulative (g/m²)</th>
           </tr>
-          ${analysisResult!.monthlyData.map((data, i) => `
+          ${climateData.map((month, i) => `
             <tr>
-              <td>${data.month}</td>
-              <td>${data.condensationAmount.toFixed(1)}</td>
-              <td>${data.evaporationAmount.toFixed(1)}</td>
-              <td style="color: ${data.netAccumulation > 0 ? '#dc3545' : '#008000'}">${data.netAccumulation.toFixed(1)}</td>
-              <td>${data.cumulativeAccumulation.toFixed(1)}</td>
+              <td>${month.month}</td>
+              <td>${month.externalTemp}</td>
+              <td>${month.externalRH}</td>
+              <td>${month.internalTemp}</td>
+              <td>${month.internalRH}</td>
+              <td>${analysisResult!.monthlyData[i]?.cumulativeAccumulation.toFixed(1) || 0}</td>
             </tr>
           `).join('')}
         </table>
@@ -825,19 +608,9 @@ export default function AnalysisWorkspace() {
   };
 
   return (
-    <>
-      <ReportExportDialog
-        open={showExportDialog}
-        onOpenChange={setShowExportDialog}
-        buildups={getAllBuildupsForExport()}
-        currentBuildupId={selectedBuildupId}
-        exportFormat={exportFormat}
-        onExport={handleExportWithSelection}
-      />
-      
-      <div className="h-screen flex flex-col bg-background overflow-hidden">
-        {/* Header */}
-        <header className="h-14 border-b border-border bg-card flex items-center justify-between px-4 shrink-0">
+    <div className="h-screen flex flex-col bg-background overflow-hidden">
+      {/* Header */}
+      <header className="h-14 border-b border-border bg-card flex items-center justify-between px-4 shrink-0">
         <div className="flex items-center gap-4">
           <Button
             variant="ghost"
@@ -1010,7 +783,7 @@ export default function AnalysisWorkspace() {
                           <Button 
                             variant="outline" 
                             className="flex-1"
-                            onClick={handleOpenExportDialog}
+                            onClick={exportReport}
                           >
                             {exportFormat === 'pdf' ? (
                               <FileDown className="w-4 h-4 mr-2" />
@@ -1063,7 +836,7 @@ export default function AnalysisWorkspace() {
                   <MonthlyAccumulationChart monthlyData={analysisResult.monthlyData} className="flex-1 min-h-[350px]" />
                   <ResultsSummary 
                     result={analysisResult}
-                    onExportPDF={handleOpenExportDialog}
+                    onExportPDF={exportReport}
                   />
                 </div>
               </motion.div>
