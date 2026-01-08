@@ -14,7 +14,116 @@ export type Database = {
   }
   public: {
     Tables: {
-      [_ in never]: never
+      buildups: {
+        Row: {
+          area: number | null
+          buildup_number: number
+          climate_location: string
+          construction_type: string
+          created_at: string
+          floor_type: string | null
+          id: string
+          internal_rh: number
+          internal_temp: number
+          layers: Json
+          name: string
+          perimeter: number | null
+          project_id: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          area?: number | null
+          buildup_number?: number
+          climate_location?: string
+          construction_type?: string
+          created_at?: string
+          floor_type?: string | null
+          id?: string
+          internal_rh?: number
+          internal_temp?: number
+          layers?: Json
+          name?: string
+          perimeter?: number | null
+          project_id: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          area?: number | null
+          buildup_number?: number
+          climate_location?: string
+          construction_type?: string
+          created_at?: string
+          floor_type?: string | null
+          id?: string
+          internal_rh?: number
+          internal_temp?: number
+          layers?: Json
+          name?: string
+          perimeter?: number | null
+          project_id?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "buildups_project_id_fkey"
+            columns: ["project_id"]
+            isOneToOne: false
+            referencedRelation: "projects"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      profiles: {
+        Row: {
+          created_at: string
+          id: string
+          updated_at: string
+          user_id: string
+          username: string | null
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          updated_at?: string
+          user_id: string
+          username?: string | null
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          updated_at?: string
+          user_id?: string
+          username?: string | null
+        }
+        Relationships: []
+      }
+      projects: {
+        Row: {
+          created_at: string
+          id: string
+          name: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          name?: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          name?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
     }
     Views: {
       [_ in never]: never
