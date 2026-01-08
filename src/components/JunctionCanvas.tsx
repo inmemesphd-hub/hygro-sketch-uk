@@ -190,9 +190,8 @@ export function JunctionCanvas({
       });
       canvas.add(innerLabel);
 
-      // Draw layers in reverse order so internal is at top
-      const reversedLayers = [...construction.layers].reverse();
-      reversedLayers.forEach((layer, index) => {
+      // Draw layers in order - first layer is internal (at top), matching Build tab
+      construction.layers.forEach((layer, index) => {
         const layerHeight = Math.max(layer.thickness * scale, 15);
         const { color } = getMaterialStyle(layer.material.category);
 
