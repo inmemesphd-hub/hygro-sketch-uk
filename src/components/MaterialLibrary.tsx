@@ -97,9 +97,9 @@ export function MaterialLibrary({
           </DialogTitle>
         </DialogHeader>
 
-        <div className="flex-1 min-h-0 px-6 pb-6 flex-col flex items-start justify-center gap-[10px]">
+        <div className="flex-1 min-h-0 px-6 pb-6 flex flex-col gap-3">
           {/* Search and Custom Material Toggle */}
-          <div className="flex gap-2 mb-4">
+          <div className="flex gap-2">
             <div className="relative flex-1">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
               <Input placeholder="Search materials..." value={searchQuery} onChange={e => setSearchQuery(e.target.value)} className="pl-10 bg-secondary border-border" />
@@ -172,9 +172,9 @@ export function MaterialLibrary({
               </div>
             </div>}
 
-          {/* Category Tabs - Horizontal scrollable with visible scroll */}
-          <ScrollArea className="w-full mb-4" orientation="horizontal">
-            <div className="flex gap-2 pb-3 px-1">
+          {/* Category Tabs - Always visible with horizontal scroll */}
+          <ScrollArea className="w-full shrink-0" orientation="horizontal">
+            <div className="flex gap-2 pb-2 px-1">
               <Button variant={activeCategory === 'all' ? 'default' : 'outline'} size="sm" onClick={() => setActiveCategory('all')} className="shrink-0 whitespace-nowrap">
                 All ({allMaterials.length})
               </Button>
@@ -188,8 +188,8 @@ export function MaterialLibrary({
             </div>
           </ScrollArea>
 
-          {/* Materials Grid - Takes remaining space with both scrollbars */}
-          <ScrollArea className="flex-1 min-h-0 border rounded-lg bg-secondary/20">
+          {/* Materials Grid - Constrained height to ensure categories are visible */}
+          <ScrollArea className="flex-1 min-h-0 max-h-[400px] border rounded-lg bg-secondary/20">
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3 p-4">
               {filteredMaterials.map(material => <button key={material.id} onClick={() => handleSelect(material)} className={cn("material-layer text-left hover:border-primary/50 transition-all group", material.isCustom && "border-primary/30 bg-primary/5")}>
                   <div className="flex items-start justify-between">
