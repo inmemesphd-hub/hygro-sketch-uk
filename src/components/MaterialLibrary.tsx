@@ -95,8 +95,8 @@ export function MaterialLibrary({ open, onClose, onSelect, mode = 'layer' }: Mat
 
   return (
     <Dialog open={open} onOpenChange={onClose}>
-      <DialogContent className="max-w-4xl max-h-[85vh] overflow-hidden flex flex-col bg-card border-border">
-        <DialogHeader>
+      <DialogContent className="max-w-4xl max-h-[85vh] flex flex-col bg-card border-border p-0">
+        <DialogHeader className="px-6 pt-6 pb-4">
           <DialogTitle className="text-lg font-semibold flex items-center gap-2">
             UK Material Library
             {getModeLabel() && (
@@ -107,9 +107,9 @@ export function MaterialLibrary({ open, onClose, onSelect, mode = 'layer' }: Mat
           </DialogTitle>
         </DialogHeader>
 
-        <div className="flex flex-col gap-4 flex-1 min-h-0">
+        <div className="flex flex-col flex-1 min-h-0 px-6 pb-6">
           {/* Search and Custom Material Toggle */}
-          <div className="flex gap-2">
+          <div className="flex gap-2 mb-4">
             <div className="relative flex-1">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
               <Input
@@ -131,7 +131,7 @@ export function MaterialLibrary({ open, onClose, onSelect, mode = 'layer' }: Mat
 
           {/* Custom Material Form */}
           {showCustomForm && (
-            <div className="p-4 rounded-lg border border-primary/30 bg-primary/5 space-y-4">
+            <div className="p-4 rounded-lg border border-primary/30 bg-primary/5 space-y-4 mb-4">
               <h4 className="font-medium text-sm flex items-center gap-2">
                 <Beaker className="w-4 h-4 text-primary" />
                 Create Custom Material
@@ -233,14 +233,14 @@ export function MaterialLibrary({ open, onClose, onSelect, mode = 'layer' }: Mat
             </div>
           )}
 
-          {/* Category Tabs - Horizontal scrollable */}
-          <div className="overflow-x-auto">
-            <div className="flex gap-2 pb-2 min-w-max">
+          {/* Category Tabs - Horizontal scrollable with visible scroll */}
+          <ScrollArea className="w-full mb-4" orientation="horizontal">
+            <div className="flex gap-2 pb-3 px-1">
               <Button
                 variant={activeCategory === 'all' ? 'default' : 'outline'}
                 size="sm"
                 onClick={() => setActiveCategory('all')}
-                className="shrink-0"
+                className="shrink-0 whitespace-nowrap"
               >
                 All ({allMaterials.length})
               </Button>
@@ -253,18 +253,18 @@ export function MaterialLibrary({ open, onClose, onSelect, mode = 'layer' }: Mat
                     variant={activeCategory === cat.value ? 'default' : 'outline'}
                     size="sm"
                     onClick={() => setActiveCategory(cat.value)}
-                    className="shrink-0"
+                    className="shrink-0 whitespace-nowrap"
                   >
                     {cat.label} ({count})
                   </Button>
                 );
               })}
             </div>
-          </div>
+          </ScrollArea>
 
-          {/* Materials Grid - Takes remaining space */}
-          <ScrollArea className="flex-1 min-h-0">
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-3 pr-4 pb-4">
+          {/* Materials Grid - Takes remaining space with both scrollbars */}
+          <ScrollArea className="flex-1 min-h-0 border rounded-lg bg-secondary/20">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3 p-4">
               {filteredMaterials.map(material => (
                 <button
                   key={material.id}
@@ -277,7 +277,7 @@ export function MaterialLibrary({ open, onClose, onSelect, mode = 'layer' }: Mat
                   <div className="flex items-start justify-between">
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2 flex-wrap">
-                        <h4 className="font-medium text-foreground group-hover:text-primary transition-colors truncate">
+                        <h4 className="font-medium text-foreground group-hover:text-primary transition-colors">
                           {material.name}
                         </h4>
                         {material.isCustom && (

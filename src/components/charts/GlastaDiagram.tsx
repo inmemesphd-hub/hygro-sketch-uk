@@ -199,95 +199,97 @@ export function GlastaDiagram({
         </div>
       </div>
       
-      <div className="p-4">
-        <ResponsiveContainer width="100%" height={350}>
-          <ComposedChart data={chartData} margin={{ top: 20, right: 60, left: 20, bottom: 30 }}>
-            <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
-            
-            {/* Layer boundary reference lines */}
-            {layerBoundaries.map((boundary, idx) => (
-              <ReferenceLine 
-                key={idx}
-                x={boundary.position}
+      <div className="p-4" style={{ minHeight: 380 }}>
+        <div style={{ width: '100%', height: 350 }}>
+          <ResponsiveContainer width="100%" height="100%">
+            <ComposedChart data={chartData} margin={{ top: 20, right: 60, left: 20, bottom: 30 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
+              
+              {/* Layer boundary reference lines */}
+              {layerBoundaries.map((boundary, idx) => (
+                <ReferenceLine 
+                  key={idx}
+                  x={boundary.position}
+                  stroke="hsl(var(--muted-foreground))"
+                  strokeDasharray="5 5"
+                  strokeWidth={1}
+                />
+              ))}
+
+              <XAxis 
+                dataKey="position" 
                 stroke="hsl(var(--muted-foreground))"
-                strokeDasharray="5 5"
-                strokeWidth={1}
+                tick={{ fontSize: 11 }}
+                label={{ value: 'Position (mm)', position: 'bottom', offset: 10, fill: 'hsl(var(--muted-foreground))', fontSize: 11 }}
               />
-            ))}
+              
+              {/* Left Y-axis for Pressure */}
+              <YAxis 
+                yAxisId="pressure"
+                stroke="hsl(var(--muted-foreground))"
+                tick={{ fontSize: 11 }}
+                label={{ value: 'Pressure (Pa)', angle: -90, position: 'insideLeft', fill: 'hsl(var(--muted-foreground))', fontSize: 11 }}
+              />
+              
+              {/* Right Y-axis for Temperature */}
+              <YAxis 
+                yAxisId="temperature"
+                orientation="right"
+                stroke="#22c55e"
+                tick={{ fontSize: 11, fill: '#22c55e' }}
+                label={{ value: 'Temperature (°C)', angle: 90, position: 'insideRight', fill: '#22c55e', fontSize: 11 }}
+                domain={['auto', 'auto']}
+              />
+              
+              <Tooltip content={<CustomTooltip />} />
+              <Legend wrapperStyle={{ fontSize: '12px', paddingTop: '10px' }} />
+              
+              {/* Temperature line (green) */}
+              <Line
+                yAxisId="temperature"
+                type="monotone"
+                dataKey="temperature"
+                name="Temperature (°C)"
+                stroke="#22c55e"
+                strokeWidth={2}
+                dot={{ fill: '#22c55e', r: 3 }}
+              />
+              
+              {/* Saturation pressure line (blue) */}
+              <Line
+                yAxisId="pressure"
+                type="monotone"
+                dataKey="saturationPressure"
+                name="Saturated VP (Pa)"
+                stroke="#3b82f6"
+                strokeWidth={2}
+                dot={{ fill: '#3b82f6', r: 3 }}
+              />
+              
+              {/* Actual vapour pressure line (red) */}
+              <Line
+                yAxisId="pressure"
+                type="monotone"
+                dataKey="vapourPressure"
+                name="Partial VP (Pa)"
+                stroke="#ef4444"
+                strokeWidth={2}
+                dot={{ fill: '#ef4444', r: 3 }}
+              />
 
-            <XAxis 
-              dataKey="position" 
-              stroke="hsl(var(--muted-foreground))"
-              tick={{ fontSize: 11 }}
-              label={{ value: 'Position (mm)', position: 'bottom', offset: 10, fill: 'hsl(var(--muted-foreground))', fontSize: 11 }}
-            />
-            
-            {/* Left Y-axis for Pressure */}
-            <YAxis 
-              yAxisId="pressure"
-              stroke="hsl(var(--muted-foreground))"
-              tick={{ fontSize: 11 }}
-              label={{ value: 'Pressure (Pa)', angle: -90, position: 'insideLeft', fill: 'hsl(var(--muted-foreground))', fontSize: 11 }}
-            />
-            
-            {/* Right Y-axis for Temperature */}
-            <YAxis 
-              yAxisId="temperature"
-              orientation="right"
-              stroke="#22c55e"
-              tick={{ fontSize: 11, fill: '#22c55e' }}
-              label={{ value: 'Temperature (°C)', angle: 90, position: 'insideRight', fill: '#22c55e', fontSize: 11 }}
-              domain={['auto', 'auto']}
-            />
-            
-            <Tooltip content={<CustomTooltip />} />
-            <Legend wrapperStyle={{ fontSize: '12px', paddingTop: '10px' }} />
-            
-            {/* Temperature line (green) */}
-            <Line
-              yAxisId="temperature"
-              type="monotone"
-              dataKey="temperature"
-              name="Temperature (°C)"
-              stroke="#22c55e"
-              strokeWidth={2}
-              dot={{ fill: '#22c55e', r: 3 }}
-            />
-            
-            {/* Saturation pressure line (blue) */}
-            <Line
-              yAxisId="pressure"
-              type="monotone"
-              dataKey="saturationPressure"
-              name="Saturated VP (Pa)"
-              stroke="#3b82f6"
-              strokeWidth={2}
-              dot={{ fill: '#3b82f6', r: 3 }}
-            />
-            
-            {/* Actual vapour pressure line (red) */}
-            <Line
-              yAxisId="pressure"
-              type="monotone"
-              dataKey="vapourPressure"
-              name="Partial VP (Pa)"
-              stroke="#ef4444"
-              strokeWidth={2}
-              dot={{ fill: '#ef4444', r: 3 }}
-            />
-
-            {/* Condensation area */}
-            <Area
-              yAxisId="pressure"
-              type="monotone"
-              dataKey="condensation"
-              name="Condensation"
-              fill="hsl(var(--destructive) / 0.3)"
-              stroke="transparent"
-              strokeWidth={0}
-            />
-          </ComposedChart>
-        </ResponsiveContainer>
+              {/* Condensation area */}
+              <Area
+                yAxisId="pressure"
+                type="monotone"
+                dataKey="condensation"
+                name="Condensation"
+                fill="hsl(var(--destructive) / 0.3)"
+                stroke="transparent"
+                strokeWidth={0}
+              />
+            </ComposedChart>
+          </ResponsiveContainer>
+        </div>
 
         {/* Layer labels below chart */}
         <div className="mt-2 flex items-center gap-1 text-xs text-muted-foreground overflow-x-auto">
@@ -354,40 +356,42 @@ export function TemperatureProfile({ result, className }: TemperatureProfileProp
         <span className="panel-title">Temperature Profile</span>
       </div>
       
-      <div className="p-4">
-        <ResponsiveContainer width="100%" height={200}>
-          <LineChart data={chartData} margin={{ top: 10, right: 30, left: 10, bottom: 10 }}>
-            <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
-            <XAxis 
-              dataKey="position" 
-              stroke="hsl(var(--muted-foreground))"
-              tick={{ fontSize: 11 }}
-            />
-            <YAxis 
-              stroke="hsl(var(--muted-foreground))"
-              tick={{ fontSize: 11 }}
-              domain={['auto', 'auto']}
-              label={{ value: '°C', angle: -90, position: 'insideLeft', fill: 'hsl(var(--muted-foreground))', fontSize: 11 }}
-            />
-            <Tooltip content={<CustomTooltip />} />
-            
-            {/* Temperature gradient with color gradient effect */}
-            <defs>
-              <linearGradient id="tempGradient" x1="0" y1="0" x2="1" y2="0">
-                <stop offset="0%" stopColor="hsl(var(--chart-5))" />
-                <stop offset="100%" stopColor="hsl(var(--chart-1))" />
-              </linearGradient>
-            </defs>
-            
-            <Line
-              type="monotone"
-              dataKey="temperature"
-              stroke="url(#tempGradient)"
-              strokeWidth={3}
-              dot={{ fill: 'hsl(var(--chart-4))', r: 4, strokeWidth: 2, stroke: 'hsl(var(--background))' }}
-            />
-          </LineChart>
-        </ResponsiveContainer>
+      <div className="p-4" style={{ minHeight: 230 }}>
+        <div style={{ width: '100%', height: 200 }}>
+          <ResponsiveContainer width="100%" height="100%">
+            <LineChart data={chartData} margin={{ top: 10, right: 30, left: 10, bottom: 10 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
+              <XAxis 
+                dataKey="position" 
+                stroke="hsl(var(--muted-foreground))"
+                tick={{ fontSize: 11 }}
+              />
+              <YAxis 
+                stroke="hsl(var(--muted-foreground))"
+                tick={{ fontSize: 11 }}
+                domain={['auto', 'auto']}
+                label={{ value: '°C', angle: -90, position: 'insideLeft', fill: 'hsl(var(--muted-foreground))', fontSize: 11 }}
+              />
+              <Tooltip content={<CustomTooltip />} />
+              
+              {/* Temperature gradient with color gradient effect */}
+              <defs>
+                <linearGradient id="tempGradient" x1="0" y1="0" x2="1" y2="0">
+                  <stop offset="0%" stopColor="hsl(var(--chart-5))" />
+                  <stop offset="100%" stopColor="hsl(var(--chart-1))" />
+                </linearGradient>
+              </defs>
+              
+              <Line
+                type="monotone"
+                dataKey="temperature"
+                stroke="url(#tempGradient)"
+                strokeWidth={3}
+                dot={{ fill: 'hsl(var(--chart-4))', r: 4, strokeWidth: 2, stroke: 'hsl(var(--background))' }}
+              />
+            </LineChart>
+          </ResponsiveContainer>
+        </div>
       </div>
     </div>
   );

@@ -369,39 +369,39 @@ export function ConstructionBuilder({ construction, onChange }: ConstructionBuil
                         </div>
                         
                         <div className="space-y-2">
-                        <div className="flex items-center justify-between">
+                          <div className="flex items-center justify-between">
                             <Label className="text-xs">Bridging Percentage</Label>
                             <div className="flex items-center gap-2">
                               <Input
                                 type="number"
-                                min="0.0001"
+                                min="0.001"
                                 max="100"
-                                step="0.0001"
+                                step="0.001"
                                 value={layer.bridging.percentage}
                                 onChange={(e) => {
                                   const val = parseFloat(e.target.value);
-                                  if (!isNaN(val) && val >= 0.0001 && val <= 100) {
+                                  if (!isNaN(val) && val >= 0.001 && val <= 100) {
                                     updateLayer(index, {
                                       bridging: { ...layer.bridging!, percentage: val }
                                     });
                                   }
                                 }}
-                                className="w-24 h-6 text-xs font-mono"
+                                className="w-28 h-7 text-xs font-mono"
                               />
                               <span className="text-xs text-muted-foreground">%</span>
                             </div>
                           </div>
                           <Slider
-                            value={[Math.max(layer.bridging.percentage, 0.1)]}
+                            value={[Math.min(Math.max(layer.bridging.percentage, 0.1), 100)]}
                             onValueChange={([value]) => updateLayer(index, {
                               bridging: { ...layer.bridging!, percentage: value }
                             })}
                             min={0.1}
-                            max={50}
+                            max={100}
                             step={0.1}
                           />
                           <p className="text-xs text-muted-foreground">
-                            Use input for values below 0.1% (min: 0.0001%)
+                            Slider: 0.1% - 100% | Manual input: 0.001% - 100%
                           </p>
                         </div>
                       </div>

@@ -54,64 +54,66 @@ export function MonthlyAccumulationChart({ monthlyData, className }: MonthlyAccu
         </div>
       </div>
       
-      <div className="p-4">
-        <ResponsiveContainer width="100%" height={280}>
-          <ComposedChart data={chartData} margin={{ top: 10, right: 30, left: 10, bottom: 10 }}>
-            <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
-            <XAxis 
-              dataKey="month" 
-              stroke="hsl(var(--muted-foreground))"
-              tick={{ fontSize: 11 }}
-            />
-            <YAxis 
-              yAxisId="left"
-              stroke="hsl(var(--muted-foreground))"
-              tick={{ fontSize: 11 }}
-              label={{ value: 'g/m² per month', angle: -90, position: 'insideLeft', fill: 'hsl(var(--muted-foreground))', fontSize: 10 }}
-            />
-            <YAxis 
-              yAxisId="right"
-              orientation="right"
-              stroke="hsl(var(--muted-foreground))"
-              tick={{ fontSize: 11 }}
-              label={{ value: 'Cumulative g/m²', angle: 90, position: 'insideRight', fill: 'hsl(var(--muted-foreground))', fontSize: 10 }}
-            />
-            <Tooltip content={<CustomTooltip />} />
-            <Legend wrapperStyle={{ fontSize: '11px' }} />
-            
-            {/* Warning threshold line */}
-            <ReferenceLine yAxisId="right" y={500} stroke="hsl(var(--warning))" strokeDasharray="5 5" label={{ value: 'Limit', fill: 'hsl(var(--warning))', fontSize: 10 }} />
-            
-            {/* Condensation bars */}
-            <Bar 
-              yAxisId="left"
-              dataKey="condensation" 
-              name="Condensation" 
-              fill="hsl(var(--chart-1))"
-              radius={[2, 2, 0, 0]}
-            />
-            
-            {/* Evaporation bars */}
-            <Bar 
-              yAxisId="left"
-              dataKey="evaporation" 
-              name="Evaporation" 
-              fill="hsl(var(--chart-3))"
-              radius={[2, 2, 0, 0]}
-            />
-            
-            {/* Cumulative line */}
-            <Line
-              yAxisId="right"
-              type="monotone"
-              dataKey="cumulative"
-              name="Cumulative"
-              stroke="hsl(var(--chart-5))"
-              strokeWidth={3}
-              dot={{ fill: 'hsl(var(--chart-5))', r: 4, strokeWidth: 2, stroke: 'hsl(var(--background))' }}
-            />
-          </ComposedChart>
-        </ResponsiveContainer>
+      <div className="p-4" style={{ minHeight: 310 }}>
+        <div style={{ width: '100%', height: 280 }}>
+          <ResponsiveContainer width="100%" height="100%">
+            <ComposedChart data={chartData} margin={{ top: 10, right: 30, left: 10, bottom: 10 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
+              <XAxis 
+                dataKey="month" 
+                stroke="hsl(var(--muted-foreground))"
+                tick={{ fontSize: 11 }}
+              />
+              <YAxis 
+                yAxisId="left"
+                stroke="hsl(var(--muted-foreground))"
+                tick={{ fontSize: 11 }}
+                label={{ value: 'g/m² per month', angle: -90, position: 'insideLeft', fill: 'hsl(var(--muted-foreground))', fontSize: 10 }}
+              />
+              <YAxis 
+                yAxisId="right"
+                orientation="right"
+                stroke="hsl(var(--muted-foreground))"
+                tick={{ fontSize: 11 }}
+                label={{ value: 'Cumulative g/m²', angle: 90, position: 'insideRight', fill: 'hsl(var(--muted-foreground))', fontSize: 10 }}
+              />
+              <Tooltip content={<CustomTooltip />} />
+              <Legend wrapperStyle={{ fontSize: '11px' }} />
+              
+              {/* Warning threshold line */}
+              <ReferenceLine yAxisId="right" y={500} stroke="hsl(var(--warning))" strokeDasharray="5 5" label={{ value: 'Limit', fill: 'hsl(var(--warning))', fontSize: 10 }} />
+              
+              {/* Condensation bars */}
+              <Bar 
+                yAxisId="left"
+                dataKey="condensation" 
+                name="Condensation" 
+                fill="hsl(var(--chart-1))"
+                radius={[2, 2, 0, 0]}
+              />
+              
+              {/* Evaporation bars */}
+              <Bar 
+                yAxisId="left"
+                dataKey="evaporation" 
+                name="Evaporation" 
+                fill="hsl(var(--chart-3))"
+                radius={[2, 2, 0, 0]}
+              />
+              
+              {/* Cumulative line */}
+              <Line
+                yAxisId="right"
+                type="monotone"
+                dataKey="cumulative"
+                name="Cumulative"
+                stroke="hsl(var(--chart-5))"
+                strokeWidth={3}
+                dot={{ fill: 'hsl(var(--chart-5))', r: 4, strokeWidth: 2, stroke: 'hsl(var(--background))' }}
+              />
+            </ComposedChart>
+          </ResponsiveContainer>
+        </div>
 
         <div className="mt-4 grid grid-cols-4 gap-4 text-center">
           <div className="p-2 rounded-lg bg-secondary/50">
