@@ -117,7 +117,15 @@ export default function AnalysisWorkspace() {
         if (buildup.floor_type) setFloorType(buildup.floor_type);
         if (buildup.perimeter) setPerimeter(buildup.perimeter);
         if (buildup.area) setArea(buildup.area);
-        setSelectedRegion(buildup.climate_location.toLowerCase());
+        
+        // Update region and climate data
+        const regionId = buildup.climate_location.toLowerCase();
+        setSelectedRegion(regionId);
+        // Import and use getRegionalClimateData to update climate
+        import('@/data/ukClimate').then(({ getRegionalClimateData }) => {
+          setClimateData(getRegionalClimateData(regionId));
+        });
+        
         setAnalysisResult(null); // Clear previous results
       }
     }
@@ -780,10 +788,8 @@ export default function AnalysisWorkspace() {
         
         y += 5.5;
       });
-    }
-    
-    // Glaser diagram page (capture from UI)
-    if (glastaDiagramRef.current) {
+      
+      // Glaser Diagram page for this specific buildup
       pdf.addPage();
       
       pdf.setFillColor(...colors.primary);
@@ -791,18 +797,84 @@ export default function AnalysisWorkspace() {
       pdf.setTextColor(255, 255, 255);
       pdf.setFontSize(12);
       pdf.setFont('helvetica', 'bold');
-      pdf.text('Glaser Diagram', margin, 10);
+      pdf.text(`${buildup.name} - Glaser Diagram`, margin, 10);
       
-      try {
-        const canvas = await html2canvas(glastaDiagramRef.current, {
-          scale: 2,
-          backgroundColor: '#ffffff',
-        });
-        const imgData = canvas.toDataURL('image/png');
-        pdf.addImage(imgData, 'PNG', margin, 25, contentWidth, contentWidth * 0.6);
-      } catch (e) {
-        console.error('Failed to capture Glaser diagram', e);
+      y = 25;
+      
+      // Draw a simplified Glaser diagram directly in PDF
+      const diagramHeight = 100;
+      const diagramWidth = contentWidth;
+      
+      // Background
+      pdf.setFillColor(250, 250, 250);
+      pdf.roundedRect(margin, y, diagramWidth, diagramHeight, 2, 2, 'F');
+      pdf.setDrawColor(...colors.border);
+      pdf.rect(margin, y, diagramWidth, diagramHeight);
+      
+      // Get vapour pressure data from result
+      const vpData = result.vapourPressureGradient;
+      if (vpData && vpData.length > 1) {
+        const maxPosition = vpData[vpData.length - 1].position;
+        const maxPressure = Math.max(...vpData.map(p => Math.max(p.pressure, p.saturation)));
+        const minPressure = Math.min(...vpData.map(p => Math.min(p.pressure, p.saturation)));
+        const pressureRange = maxPressure - minPressure || 1;
+        
+        const scaleX = (pos: number) => margin + 10 + (pos / maxPosition) * (diagramWidth - 20);
+        const scaleY = (pressure: number) => y + diagramHeight - 10 - ((pressure - minPressure) / pressureRange) * (diagramHeight - 20);
+        
+        // Draw saturation pressure line (blue)
+        pdf.setDrawColor(59, 130, 246);
+        pdf.setLineWidth(0.5);
+        for (let i = 1; i < vpData.length; i++) {
+          pdf.line(
+            scaleX(vpData[i-1].position), scaleY(vpData[i-1].saturation),
+            scaleX(vpData[i].position), scaleY(vpData[i].saturation)
+          );
+        }
+        
+        // Draw vapour pressure line (red)
+        pdf.setDrawColor(239, 68, 68);
+        for (let i = 1; i < vpData.length; i++) {
+          pdf.line(
+            scaleX(vpData[i-1].position), scaleY(vpData[i-1].pressure),
+            scaleX(vpData[i].position), scaleY(vpData[i].pressure)
+          );
+        }
+        
+        // Mark condensation zones
+        const condensationPoints = vpData.filter(p => p.pressure > p.saturation);
+        if (condensationPoints.length > 0) {
+          pdf.setFillColor(239, 68, 68);
+          pdf.setTextColor(...colors.fail);
+          pdf.setFontSize(8);
+          pdf.text('⚠ Condensation zone detected', margin + 5, y + diagramHeight + 8);
+        }
       }
+      
+      // Legend
+      y += diagramHeight + 15;
+      pdf.setFontSize(8);
+      
+      // Blue line legend
+      pdf.setDrawColor(59, 130, 246);
+      pdf.setLineWidth(1);
+      pdf.line(margin, y, margin + 15, y);
+      pdf.setTextColor(...colors.text);
+      pdf.text('Saturated Vapour Pressure (Pa)', margin + 20, y + 2);
+      
+      // Red line legend
+      pdf.setDrawColor(239, 68, 68);
+      pdf.line(margin + 90, y, margin + 105, y);
+      pdf.text('Partial Vapour Pressure (Pa)', margin + 110, y + 2);
+      
+      y += 15;
+      
+      // Note about diagram
+      pdf.setFontSize(7);
+      pdf.setTextColor(...colors.muted);
+      const diagramNote = 'Glaser diagram showing vapour pressure gradients across the construction. Condensation occurs where partial VP exceeds saturated VP.';
+      const wrappedNote = wrapText(diagramNote, contentWidth, 7);
+      pdf.text(wrappedNote, margin, y);
     }
     
     // Footer on last page
@@ -1051,15 +1123,80 @@ export default function AnalysisWorkspace() {
                   <TabsContent value="climate" className="h-full m-0 p-4 overflow-auto">
                     <ClimateInput
                       climateData={climateData}
-                      onChange={setClimateData}
+                      onChange={(data) => {
+                        setClimateData(data);
+                        // Save region to buildup
+                        if (selectedBuildupId) {
+                          updateBuildup(selectedBuildupId, { climate_location: selectedRegion });
+                        }
+                      }}
                       selectedRegion={selectedRegion}
-                      onRegionChange={setSelectedRegion}
+                      onRegionChange={(region) => {
+                        setSelectedRegion(region);
+                        // Save region to buildup
+                        if (selectedBuildupId) {
+                          updateBuildup(selectedBuildupId, { climate_location: region });
+                        }
+                      }}
                     />
                   </TabsContent>
 
                   <TabsContent value="results" className="h-full m-0 overflow-hidden">
                     {analysisResult && (
                       <div className="h-full p-4 flex flex-col">
+                        {/* Build-up selector when multiple results exist */}
+                        {multiAnalysisResults.size > 1 && (
+                          <div className="mb-4">
+                            <label className="text-xs text-muted-foreground mb-2 block">Select Build-up</label>
+                            <Select 
+                              value={selectedBuildupId || ''} 
+                              onValueChange={(id) => {
+                                setSelectedBuildupId(id);
+                                const result = multiAnalysisResults.get(id);
+                                if (result) setAnalysisResult(result);
+                                // Update construction to match selected buildup
+                                const project = projects.find(p => p.id === selectedProjectId);
+                                const buildup = project?.buildups.find(b => b.id === id);
+                                if (buildup) {
+                                  setConstruction({
+                                    id: buildup.id,
+                                    name: buildup.name,
+                                    type: buildup.construction_type,
+                                    layers: buildup.layers,
+                                    internalSurfaceResistance: 0.13,
+                                    externalSurfaceResistance: 0.04,
+                                  });
+                                }
+                              }}
+                            >
+                              <SelectTrigger className="w-full">
+                                <SelectValue placeholder="Choose build-up" />
+                              </SelectTrigger>
+                              <SelectContent>
+                                {Array.from(multiAnalysisResults.keys()).map(id => {
+                                  const project = projects.find(p => p.id === selectedProjectId);
+                                  const buildup = project?.buildups.find(b => b.id === id);
+                                  const result = multiAnalysisResults.get(id);
+                                  return (
+                                    <SelectItem key={id} value={id}>
+                                      <span className="flex items-center gap-2">
+                                        {buildup?.name || 'Build-up'}
+                                        <span className={cn(
+                                          "text-xs px-1.5 py-0.5 rounded",
+                                          result?.overallResult === 'pass' 
+                                            ? "bg-success/20 text-success" 
+                                            : "bg-destructive/20 text-destructive"
+                                        )}>
+                                          {result?.overallResult === 'pass' ? 'PASS' : 'FAIL'}
+                                        </span>
+                                      </span>
+                                    </SelectItem>
+                                  );
+                                })}
+                              </SelectContent>
+                            </Select>
+                          </div>
+                        )}
                         <DetailedResultsPanel 
                           result={analysisResult}
                           climateData={climateData}
