@@ -1,4 +1,4 @@
-import { useState, useMemo, useRef } from 'react';
+import { useState, useMemo, useRef, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Construction, ConstructionLayer, ClimateData, AnalysisResult } from '@/types/materials';
 import { ukMaterialDatabase } from '@/data/ukMaterials';
@@ -10,6 +10,9 @@ import { JunctionCanvas, FloorType } from '@/components/JunctionCanvas';
 import { GlastaDiagram, TemperatureProfile } from '@/components/charts/GlastaDiagram';
 import { MonthlyAccumulationChart } from '@/components/charts/MonthlyAccumulationChart';
 import { ResultsSummary } from '@/components/ResultsSummary';
+import { ProjectManager } from '@/components/ProjectManager';
+import { useProjects, BuildupData } from '@/hooks/useProjects';
+import { useAuth } from '@/hooks/useAuth';
 import { Button } from '@/components/ui/button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { ScrollArea } from '@/components/ui/scroll-area';
@@ -17,7 +20,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { 
   Layers, BarChart3, FileText, Settings, 
   Play, Building2, Thermometer, Droplets,
-  ChevronRight, Menu, X, FileDown, FileType
+  ChevronRight, Menu, X, FileDown, FileType, FolderOpen, PanelLeftClose, PanelLeft
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import jsPDF from 'jspdf';
@@ -28,51 +31,29 @@ const defaultConstruction: Construction = {
   id: 'default',
   name: 'New Construction',
   type: 'wall',
-  layers: [
-    {
-      id: 'layer-1',
-      material: ukMaterialDatabase.find(m => m.id === 'plasterboard-std')!,
-      thickness: 12.5,
-    },
-    {
-      id: 'layer-2',
-      material: ukMaterialDatabase.find(m => m.id === 'mineral-wool')!,
-      thickness: 100,
-      bridging: {
-        material: ukMaterialDatabase.find(m => m.id === 'softwood')!,
-        percentage: 15,
-      },
-    },
-    {
-      id: 'layer-3',
-      material: ukMaterialDatabase.find(m => m.id === 'osb')!,
-      thickness: 11,
-    },
-    {
-      id: 'layer-4',
-      material: ukMaterialDatabase.find(m => m.id === 'breather-membrane')!,
-      thickness: 0.3,
-    },
-    {
-      id: 'layer-5',
-      material: ukMaterialDatabase.find(m => m.id === 'brick-clay')!,
-      thickness: 102.5,
-    },
-  ],
+  layers: [],
   internalSurfaceResistance: 0.13,
   externalSurfaceResistance: 0.04,
 };
 
 export default function AnalysisWorkspace() {
+  const { user } = useAuth();
+  const { projects, currentProject, updateBuildup, createProject, createBuildup } = useProjects();
+  
   const [construction, setConstruction] = useState<Construction>(defaultConstruction);
   const [climateData, setClimateData] = useState<ClimateData[]>(ukMonthlyClimateData);
   const [selectedRegion, setSelectedRegion] = useState('london');
   const [analysisResult, setAnalysisResult] = useState<AnalysisResult | null>(null);
   const [activeTab, setActiveTab] = useState('construction');
   const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [projectPanelOpen, setProjectPanelOpen] = useState(true);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [exportFormat, setExportFormat] = useState<'pdf' | 'word'>('pdf');
   const [selectedGlaserMonth, setSelectedGlaserMonth] = useState<string>('worst');
+  
+  // Current buildup tracking
+  const [selectedBuildupId, setSelectedBuildupId] = useState<string | null>(null);
+  const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
   
   // Floor-specific state
   const [constructionType, setConstructionType] = useState<'wall' | 'floor'>('wall');
@@ -81,6 +62,65 @@ export default function AnalysisWorkspace() {
   const [area, setArea] = useState<number>(100);
   
   const glastaDiagramRef = useRef<HTMLDivElement>(null);
+
+  // Auto-create first project if none exist
+  useEffect(() => {
+    const initProject = async () => {
+      if (user && projects.length === 0 && !selectedBuildupId) {
+        const project = await createProject('My First Project');
+        if (project) {
+          const buildup = await createBuildup(project.id, { name: 'Build-up 1' });
+          if (buildup) {
+            setSelectedBuildupId(buildup.id);
+            setSelectedProjectId(project.id);
+          }
+        }
+      }
+    };
+    initProject();
+  }, [user, projects.length]);
+
+  // Load buildup data when selection changes
+  useEffect(() => {
+    if (selectedBuildupId && selectedProjectId) {
+      const project = projects.find(p => p.id === selectedProjectId);
+      const buildup = project?.buildups.find(b => b.id === selectedBuildupId);
+      
+      if (buildup) {
+        setConstruction({
+          id: buildup.id,
+          name: buildup.name,
+          type: buildup.construction_type,
+          layers: buildup.layers,
+          internalSurfaceResistance: 0.13,
+          externalSurfaceResistance: 0.04,
+        });
+        setConstructionType(buildup.construction_type);
+        if (buildup.floor_type) setFloorType(buildup.floor_type);
+        if (buildup.perimeter) setPerimeter(buildup.perimeter);
+        if (buildup.area) setArea(buildup.area);
+        setSelectedRegion(buildup.climate_location.toLowerCase());
+        setAnalysisResult(null); // Clear previous results
+      }
+    }
+  }, [selectedBuildupId, selectedProjectId, projects]);
+
+  // Auto-save buildup changes
+  const handleConstructionChange = (newConstruction: Construction) => {
+    setConstruction(newConstruction);
+    if (selectedBuildupId) {
+      updateBuildup(selectedBuildupId, { layers: newConstruction.layers });
+    }
+  };
+
+  const handleSelectBuildup = (buildup: BuildupData | null, projectId: string) => {
+    if (buildup) {
+      setSelectedBuildupId(buildup.id);
+      setSelectedProjectId(projectId);
+    } else {
+      setSelectedBuildupId(null);
+    }
+  };
 
   const handleConstructionTypeChange = (type: 'wall' | 'floor', ft?: FloorType, p?: number, a?: number) => {
     setConstructionType(type);
@@ -92,6 +132,16 @@ export default function AnalysisWorkspace() {
     } else {
       setConstruction(prev => ({ ...prev, type: 'wall' }));
     }
+    
+    // Save to database
+    if (selectedBuildupId) {
+      updateBuildup(selectedBuildupId, {
+        construction_type: type,
+        floor_type: type === 'floor' ? (ft || floorType) : null,
+        perimeter: type === 'floor' ? (p || perimeter) : null,
+        area: type === 'floor' ? (a || area) : null,
+      });
+    }
   };
 
   const runAnalysis = () => {
@@ -99,7 +149,6 @@ export default function AnalysisWorkspace() {
     
     setIsAnalyzing(true);
     
-    // Simulate processing delay for UX
     setTimeout(() => {
       try {
         const groundFloorParams = constructionType === 'floor' && (floorType === 'ground' || floorType === 'solid' || floorType === 'suspended')
@@ -134,9 +183,8 @@ export default function AnalysisWorkspace() {
     const margin = 15;
     const contentWidth = pageWidth - (margin * 2);
     
-    // Approved Document C color scheme
     const colors = {
-      primary: [0, 102, 153] as [number, number, number], // Teal blue
+      primary: [0, 102, 153] as [number, number, number],
       success: [0, 128, 0] as [number, number, number],
       fail: [220, 53, 69] as [number, number, number],
       header: [43, 57, 72] as [number, number, number],
@@ -146,8 +194,7 @@ export default function AnalysisWorkspace() {
       lightBg: [245, 247, 250] as [number, number, number],
     };
 
-    // ==================== COVER PAGE ====================
-    // Header bar
+    // Cover page
     pdf.setFillColor(...colors.primary);
     pdf.rect(0, 0, pageWidth, 35, 'F');
     
@@ -160,7 +207,6 @@ export default function AnalysisWorkspace() {
     pdf.setFont('helvetica', 'normal');
     pdf.text('BS EN ISO 13788 Compliant Report', margin, 30);
     
-    // Status badge
     let y = 55;
     const isPass = analysisResult!.overallResult === 'pass';
     pdf.setFillColor(...(isPass ? colors.success : colors.fail));
@@ -175,7 +221,6 @@ export default function AnalysisWorkspace() {
     pdf.setFont('helvetica', 'normal');
     pdf.text(isPass ? 'Structure is free of condensation.' : (analysisResult!.failureReason || 'Structure fails condensation criteria.'), margin + 55, y);
     
-    // Summary info
     y = 85;
     pdf.setFillColor(...colors.lightBg);
     pdf.roundedRect(margin, y - 5, contentWidth, 35, 3, 3, 'F');
@@ -194,7 +239,7 @@ export default function AnalysisWorkspace() {
     pdf.text('BS5250 Climate Data', margin + 45, y + 19);
     pdf.text(new Date().toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' }), margin + 45, y + 26);
     
-    // ==================== CONSTRUCTION DETAILS ====================
+    // Construction details
     y = 135;
     pdf.setFont('helvetica', 'bold');
     pdf.setFontSize(14);
@@ -202,95 +247,72 @@ export default function AnalysisWorkspace() {
     pdf.text('Construction Details - Cross Section', margin, y);
     
     y += 8;
-    
-    // Labels for surfaces
     pdf.setFontSize(9);
     pdf.setTextColor(...colors.primary);
     pdf.text('Outer Surface', margin, y + 5);
     
     y += 10;
     
-    // Draw construction cross-section with labels (horizontal like reference image)
-    const sectionStartY = y;
-    const layerWidth = contentWidth;
-    
-    // Material patterns and colors
     const getMaterialPattern = (category: string): { color: [number, number, number]; pattern: string } => {
       switch (category) {
-        case 'masonry':
-          return { color: [205, 92, 92], pattern: 'brick' };
-        case 'insulation':
-          return { color: [255, 200, 150], pattern: 'dots' };
-        case 'concrete':
-          return { color: [169, 169, 169], pattern: 'solid' };
-        case 'timber':
-          return { color: [210, 180, 140], pattern: 'wood' };
-        case 'membrane':
-          return { color: [100, 149, 237], pattern: 'lines' };
-        case 'plasterboard':
-          return { color: [245, 245, 220], pattern: 'solid' };
-        case 'metal':
-          return { color: [192, 192, 192], pattern: 'metallic' };
-        case 'airgap':
-          return { color: [240, 248, 255], pattern: 'air' };
-        case 'render':
-          return { color: [222, 184, 135], pattern: 'solid' };
-        case 'cladding':
-          return { color: [139, 69, 19], pattern: 'wood' };
-        default:
-          return { color: [200, 200, 200], pattern: 'solid' };
+        case 'masonry': return { color: [205, 92, 92], pattern: 'brick' };
+        case 'insulation': return { color: [255, 200, 150], pattern: 'dots' };
+        case 'concrete': return { color: [169, 169, 169], pattern: 'solid' };
+        case 'timber': return { color: [210, 180, 140], pattern: 'wood' };
+        case 'membrane': return { color: [100, 149, 237], pattern: 'lines' };
+        case 'plasterboard': return { color: [245, 245, 220], pattern: 'solid' };
+        case 'metal': return { color: [192, 192, 192], pattern: 'metallic' };
+        case 'airgap': return { color: [240, 248, 255], pattern: 'air' };
+        case 'render': return { color: [222, 184, 135], pattern: 'solid' };
+        case 'cladding': return { color: [139, 69, 19], pattern: 'wood' };
+        default: return { color: [200, 200, 200], pattern: 'solid' };
       }
     };
     
     let currentY = y;
     const totalThickness = construction.layers.reduce((sum, l) => sum + l.thickness, 0);
-    const maxLayerHeight = 80; // Max height for the cross-section
+    const maxLayerHeight = 80;
     const scale = Math.min(0.2, maxLayerHeight / totalThickness);
     
     construction.layers.forEach((layer, idx) => {
       const layerHeight = Math.max(layer.thickness * scale, 12);
       const { color, pattern } = getMaterialPattern(layer.material.category);
       
-      // Draw layer rectangle
       pdf.setFillColor(...color);
-      pdf.rect(margin, currentY, layerWidth, layerHeight, 'F');
+      pdf.rect(margin, currentY, contentWidth, layerHeight, 'F');
       
-      // Add patterns
       pdf.setDrawColor(100, 100, 100);
       pdf.setLineWidth(0.1);
       
       if (pattern === 'brick') {
         for (let py = currentY; py < currentY + layerHeight; py += 3) {
-          pdf.line(margin, py, margin + layerWidth, py);
+          pdf.line(margin, py, margin + contentWidth, py);
           const offset = (Math.floor((py - currentY) / 3) % 2) * 10;
-          for (let px = margin + offset; px < margin + layerWidth; px += 20) {
+          for (let px = margin + offset; px < margin + contentWidth; px += 20) {
             pdf.line(px, py, px, Math.min(py + 3, currentY + layerHeight));
           }
         }
       } else if (pattern === 'dots') {
         for (let py = currentY + 2; py < currentY + layerHeight - 1; py += 4) {
-          for (let px = margin + 3; px < margin + layerWidth - 2; px += 6) {
+          for (let px = margin + 3; px < margin + contentWidth - 2; px += 6) {
             pdf.circle(px, py, 0.5, 'F');
           }
         }
       }
       
-      // Bridging indication
       if (layer.bridging) {
         pdf.setFillColor(80, 80, 80);
         const studWidth = 3;
         const studSpacing = 30;
-        for (let sx = margin + 15; sx < margin + layerWidth - 10; sx += studSpacing) {
+        for (let sx = margin + 15; sx < margin + contentWidth - 10; sx += studSpacing) {
           pdf.rect(sx, currentY, studWidth, layerHeight, 'F');
         }
       }
       
-      // Border
       pdf.setDrawColor(...colors.border);
       pdf.setLineWidth(0.3);
-      pdf.rect(margin, currentY, layerWidth, layerHeight);
+      pdf.rect(margin, currentY, contentWidth, layerHeight);
       
-      // Layer label inside the layer
       pdf.setFontSize(7);
       pdf.setTextColor(0, 0, 0);
       let labelText = `${layer.thickness}mm ${layer.material.name}`;
@@ -302,14 +324,12 @@ export default function AnalysisWorkspace() {
       currentY += layerHeight;
     });
     
-    // Inner surface label
     pdf.setFontSize(9);
     pdf.setTextColor(...colors.success);
     pdf.text('Inner Surface', margin, currentY + 8);
     
     y = currentY + 15;
     
-    // Construction table with correct Greek symbols
     pdf.setFillColor(...colors.primary);
     pdf.rect(margin, y, contentWidth, 8, 'F');
     pdf.setTextColor(255, 255, 255);
@@ -318,7 +338,6 @@ export default function AnalysisWorkspace() {
     pdf.text('Layer', margin + 2, y + 5.5);
     pdf.text('Material', margin + 20, y + 5.5);
     pdf.text('Thickness (mm)', margin + 90, y + 5.5);
-    // Use proper text for symbols since jsPDF doesn't support Greek well
     pdf.text('Conductivity', margin + 120, y + 5.5);
     pdf.text('Vapour Res.', margin + 148, y + 5.5);
     
@@ -345,7 +364,6 @@ export default function AnalysisWorkspace() {
       y += 7;
     });
     
-    // U-value summary
     y += 5;
     pdf.setFillColor(...colors.lightBg);
     pdf.roundedRect(margin, y, contentWidth, 20, 2, 2, 'F');
@@ -361,10 +379,9 @@ export default function AnalysisWorkspace() {
     pdf.setTextColor(...colors.muted);
     pdf.text(`${(analysisResult!.uValueWithoutBridging || analysisResult!.uValue).toFixed(3)} W/m2K`, margin + 60, y + 16);
     
-    // ==================== NEW PAGE - RESULTS ====================
+    // Results page
     pdf.addPage();
     
-    // Header
     pdf.setFillColor(...colors.primary);
     pdf.rect(0, 0, pageWidth, 15, 'F');
     pdf.setTextColor(255, 255, 255);
@@ -374,7 +391,6 @@ export default function AnalysisWorkspace() {
     
     y = 25;
     
-    // Surface condensation table (like the reference image)
     pdf.setFillColor(...colors.primary);
     pdf.rect(margin, y, contentWidth, 8, 'F');
     pdf.setTextColor(255, 255, 255);
@@ -421,7 +437,6 @@ export default function AnalysisWorkspace() {
       y += 6;
     });
     
-    // Monthly accumulation summary
     y += 10;
     pdf.setFont('helvetica', 'bold');
     pdf.setFontSize(12);
@@ -463,10 +478,9 @@ export default function AnalysisWorkspace() {
       y += 6;
     });
     
-    // ==================== NEW PAGE - GLASTA DIAGRAM ====================
+    // Glaser diagram page
     pdf.addPage();
     
-    // Header
     pdf.setFillColor(...colors.primary);
     pdf.rect(0, 0, pageWidth, 15, 'F');
     pdf.setTextColor(255, 255, 255);
@@ -474,7 +488,6 @@ export default function AnalysisWorkspace() {
     pdf.setFont('helvetica', 'bold');
     pdf.text('Glaser Diagram', margin, 10);
     
-    // Capture the Glasta diagram
     if (glastaDiagramRef.current) {
       try {
         const canvas = await html2canvas(glastaDiagramRef.current, {
@@ -488,7 +501,6 @@ export default function AnalysisWorkspace() {
       }
     }
     
-    // Standards reference at bottom
     pdf.setFontSize(8);
     pdf.setTextColor(...colors.muted);
     pdf.text(
@@ -501,7 +513,6 @@ export default function AnalysisWorkspace() {
   };
 
   const exportWord = async () => {
-    // Generate HTML content for Word document
     const isPass = analysisResult!.overallResult === 'pass';
     
     const htmlContent = `
@@ -604,6 +615,14 @@ export default function AnalysisWorkspace() {
           <Button
             variant="ghost"
             size="icon"
+            onClick={() => setProjectPanelOpen(!projectPanelOpen)}
+          >
+            {projectPanelOpen ? <PanelLeftClose className="w-5 h-5" /> : <PanelLeft className="w-5 h-5" />}
+          </Button>
+          
+          <Button
+            variant="ghost"
+            size="icon"
             className="lg:hidden"
             onClick={() => setSidebarOpen(!sidebarOpen)}
           >
@@ -655,7 +674,25 @@ export default function AnalysisWorkspace() {
 
       {/* Main Content */}
       <div className="flex-1 flex overflow-hidden">
-        {/* Sidebar - Wider now */}
+        {/* Project Panel */}
+        <AnimatePresence>
+          {projectPanelOpen && (
+            <motion.div
+              initial={{ width: 0, opacity: 0 }}
+              animate={{ width: 280, opacity: 1 }}
+              exit={{ width: 0, opacity: 0 }}
+              transition={{ duration: 0.2 }}
+              className="shrink-0 overflow-hidden"
+            >
+              <ProjectManager 
+                onSelectBuildup={handleSelectBuildup}
+                selectedBuildupId={selectedBuildupId}
+              />
+            </motion.div>
+          )}
+        </AnimatePresence>
+
+        {/* Sidebar */}
         <AnimatePresence>
           {sidebarOpen && (
             <motion.aside
@@ -695,7 +732,7 @@ export default function AnalysisWorkspace() {
                   <TabsContent value="construction" className="h-full m-0 p-4 overflow-auto">
                     <ConstructionBuilder 
                       construction={construction}
-                      onChange={setConstruction}
+                      onChange={handleConstructionChange}
                     />
                   </TabsContent>
 
