@@ -159,39 +159,81 @@ export function ConstructionBuilder({ construction, onChange }: ConstructionBuil
         </div>
       </div>
 
-      {/* Internal Surface Rsi */}
-      <div className="flex items-center gap-2 px-2 py-2 text-xs">
-        <div className="flex-1 h-px bg-border" />
-        <div className="flex items-center gap-2">
-          <span className="text-muted-foreground">Internal Surface</span>
-          {editingRsi ? (
-            <div className="flex items-center gap-1">
-              <span className="text-muted-foreground">Rsi =</span>
-              <Input
-                type="number"
-                step="0.01"
-                min="0"
-                max="1"
-                value={construction.internalSurfaceResistance}
-                onChange={(e) => updateSurfaceResistance('internal', e.target.value)}
-                className="w-20 h-6 text-xs"
-                onBlur={() => setEditingRsi(false)}
-                autoFocus
-              />
-              <span className="text-muted-foreground">m²K/W</span>
+      {/* Surface labels based on construction type - For floors: Internal at BOTTOM, External/Ground at TOP */}
+      {/* For walls: Internal at TOP, External at BOTTOM */}
+      {construction.type === 'floor' ? (
+        <>
+          {/* External/Ground Surface at TOP for floors */}
+          <div className="flex items-center gap-2 px-2 py-2 text-xs">
+            <div className="flex-1 h-px bg-border" />
+            <div className="flex items-center gap-2">
+              <span className="text-muted-foreground">External Surface (Ground)</span>
+              {editingRse ? (
+                <div className="flex items-center gap-1">
+                  <span className="text-muted-foreground">Rse =</span>
+                  <Input
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    max="1"
+                    value={construction.externalSurfaceResistance}
+                    onChange={(e) => updateSurfaceResistance('external', e.target.value)}
+                    className="w-20 h-6 text-xs"
+                    onBlur={() => setEditingRse(false)}
+                    autoFocus
+                  />
+                  <span className="text-muted-foreground">m²K/W</span>
+                </div>
+              ) : (
+                <button
+                  onClick={() => setEditingRse(true)}
+                  className="flex items-center gap-1 hover:text-primary transition-colors"
+                >
+                  <span className="font-mono">(Rse = {construction.externalSurfaceResistance} m²K/W)</span>
+                  <Edit2 className="w-3 h-3" />
+                </button>
+              )}
             </div>
-          ) : (
-            <button
-              onClick={() => setEditingRsi(true)}
-              className="flex items-center gap-1 hover:text-primary transition-colors"
-            >
-              <span className="font-mono">(Rsi = {construction.internalSurfaceResistance} m²K/W)</span>
-              <Edit2 className="w-3 h-3" />
-            </button>
-          )}
-        </div>
-        <div className="flex-1 h-px bg-border" />
-      </div>
+            <div className="flex-1 h-px bg-border" />
+          </div>
+        </>
+      ) : (
+        <>
+          {/* Internal Surface Rsi at TOP for walls */}
+          <div className="flex items-center gap-2 px-2 py-2 text-xs">
+            <div className="flex-1 h-px bg-border" />
+            <div className="flex items-center gap-2">
+              <span className="text-muted-foreground">Internal Surface</span>
+              {editingRsi ? (
+                <div className="flex items-center gap-1">
+                  <span className="text-muted-foreground">Rsi =</span>
+                  <Input
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    max="1"
+                    value={construction.internalSurfaceResistance}
+                    onChange={(e) => updateSurfaceResistance('internal', e.target.value)}
+                    className="w-20 h-6 text-xs"
+                    onBlur={() => setEditingRsi(false)}
+                    autoFocus
+                  />
+                  <span className="text-muted-foreground">m²K/W</span>
+                </div>
+              ) : (
+                <button
+                  onClick={() => setEditingRsi(true)}
+                  className="flex items-center gap-1 hover:text-primary transition-colors"
+                >
+                  <span className="font-mono">(Rsi = {construction.internalSurfaceResistance} m²K/W)</span>
+                  <Edit2 className="w-3 h-3" />
+                </button>
+              )}
+            </div>
+            <div className="flex-1 h-px bg-border" />
+          </div>
+        </>
+      )}
 
       <ScrollArea className="flex-1">
         <div className="space-y-2 p-1">
@@ -429,39 +471,80 @@ export function ConstructionBuilder({ construction, onChange }: ConstructionBuil
         </div>
       </ScrollArea>
 
-      {/* External Surface Rse */}
-      <div className="flex items-center gap-2 px-2 py-2 text-xs mt-2">
-        <div className="flex-1 h-px bg-border" />
-        <div className="flex items-center gap-2">
-          <span className="text-muted-foreground">External Surface</span>
-          {editingRse ? (
-            <div className="flex items-center gap-1">
-              <span className="text-muted-foreground">Rse =</span>
-              <Input
-                type="number"
-                step="0.01"
-                min="0"
-                max="1"
-                value={construction.externalSurfaceResistance}
-                onChange={(e) => updateSurfaceResistance('external', e.target.value)}
-                className="w-20 h-6 text-xs"
-                onBlur={() => setEditingRse(false)}
-                autoFocus
-              />
-              <span className="text-muted-foreground">m²K/W</span>
+      {/* Bottom surface based on construction type */}
+      {construction.type === 'floor' ? (
+        <>
+          {/* Internal Surface at BOTTOM for floors */}
+          <div className="flex items-center gap-2 px-2 py-2 text-xs mt-2">
+            <div className="flex-1 h-px bg-border" />
+            <div className="flex items-center gap-2">
+              <span className="text-muted-foreground">Internal Surface (Room)</span>
+              {editingRsi ? (
+                <div className="flex items-center gap-1">
+                  <span className="text-muted-foreground">Rsi =</span>
+                  <Input
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    max="1"
+                    value={construction.internalSurfaceResistance}
+                    onChange={(e) => updateSurfaceResistance('internal', e.target.value)}
+                    className="w-20 h-6 text-xs"
+                    onBlur={() => setEditingRsi(false)}
+                    autoFocus
+                  />
+                  <span className="text-muted-foreground">m²K/W</span>
+                </div>
+              ) : (
+                <button
+                  onClick={() => setEditingRsi(true)}
+                  className="flex items-center gap-1 hover:text-primary transition-colors"
+                >
+                  <span className="font-mono">(Rsi = {construction.internalSurfaceResistance} m²K/W)</span>
+                  <Edit2 className="w-3 h-3" />
+                </button>
+              )}
             </div>
-          ) : (
-            <button
-              onClick={() => setEditingRse(true)}
-              className="flex items-center gap-1 hover:text-primary transition-colors"
-            >
-              <span className="font-mono">(Rse = {construction.externalSurfaceResistance} m²K/W)</span>
-              <Edit2 className="w-3 h-3" />
-            </button>
-          )}
-        </div>
-        <div className="flex-1 h-px bg-border" />
-      </div>
+            <div className="flex-1 h-px bg-border" />
+          </div>
+        </>
+      ) : (
+        <>
+          {/* External Surface Rse at BOTTOM for walls */}
+          <div className="flex items-center gap-2 px-2 py-2 text-xs mt-2">
+            <div className="flex-1 h-px bg-border" />
+            <div className="flex items-center gap-2">
+              <span className="text-muted-foreground">External Surface</span>
+              {editingRse ? (
+                <div className="flex items-center gap-1">
+                  <span className="text-muted-foreground">Rse =</span>
+                  <Input
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    max="1"
+                    value={construction.externalSurfaceResistance}
+                    onChange={(e) => updateSurfaceResistance('external', e.target.value)}
+                    className="w-20 h-6 text-xs"
+                    onBlur={() => setEditingRse(false)}
+                    autoFocus
+                  />
+                  <span className="text-muted-foreground">m²K/W</span>
+                </div>
+              ) : (
+                <button
+                  onClick={() => setEditingRse(true)}
+                  className="flex items-center gap-1 hover:text-primary transition-colors"
+                >
+                  <span className="font-mono">(Rse = {construction.externalSurfaceResistance} m²K/W)</span>
+                  <Edit2 className="w-3 h-3" />
+                </button>
+              )}
+            </div>
+            <div className="flex-1 h-px bg-border" />
+          </div>
+        </>
+      )}
 
       <MaterialLibrary
         open={materialLibraryOpen}
