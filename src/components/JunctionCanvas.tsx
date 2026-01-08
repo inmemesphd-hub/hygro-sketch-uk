@@ -173,23 +173,26 @@ export function JunctionCanvas({
     const scale = 0.8;
 
     if (isFloor) {
-      // Horizontal floor layout
+      // Horizontal floor layout - Internal at TOP, Ground/External at BOTTOM
+      // This matches the report orientation
       const layerWidth = 500;
       let currentY = startY;
 
-      // "Outer surface" label at top
-      const outerLabel = new FabricText('Outer Surface (Ground/Below)', {
+      // "Internal surface" label at top
+      const innerLabel = new FabricText('Internal Surface (Room)', {
         left: startX + layerWidth / 2,
         top: startY - 25,
         fontSize: 11,
-        fill: '#3b82f6',
+        fill: '#22c55e',
         originX: 'center',
         selectable: false,
         data: { type: 'layer' },
       });
-      canvas.add(outerLabel);
+      canvas.add(innerLabel);
 
-      construction.layers.forEach((layer, index) => {
+      // Draw layers in reverse order so internal is at top
+      const reversedLayers = [...construction.layers].reverse();
+      reversedLayers.forEach((layer, index) => {
         const layerHeight = Math.max(layer.thickness * scale, 15);
         const { color } = getMaterialStyle(layer.material.category);
 
@@ -244,17 +247,17 @@ export function JunctionCanvas({
         currentY += layerHeight;
       });
 
-      // "Inner surface" label at bottom
-      const innerLabel = new FabricText('Inner Surface (Room)', {
+      // "Outer/Ground surface" label at bottom
+      const outerLabel = new FabricText('External Surface (Ground/Below)', {
         left: startX + layerWidth / 2,
         top: currentY + 15,
         fontSize: 11,
-        fill: '#22c55e',
+        fill: '#3b82f6',
         originX: 'center',
         selectable: false,
         data: { type: 'layer' },
       });
-      canvas.add(innerLabel);
+      canvas.add(outerLabel);
     } else {
       // Vertical wall layout
       const layerHeight = 280;

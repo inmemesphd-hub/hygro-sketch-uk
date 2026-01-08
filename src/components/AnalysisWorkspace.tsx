@@ -112,13 +112,15 @@ export default function AnalysisWorkspace() {
       const buildup = project?.buildups.find(b => b.id === selectedBuildupId);
       
       if (buildup) {
+        // Set correct surface resistances based on construction type per BS EN ISO 6946/13370
+        const isFloorType = buildup.construction_type === 'floor';
         setConstruction({
           id: buildup.id,
           name: buildup.name,
           type: buildup.construction_type,
           layers: buildup.layers,
-          internalSurfaceResistance: 0.13,
-          externalSurfaceResistance: 0.04,
+          internalSurfaceResistance: isFloorType ? 0.17 : 0.13,
+          externalSurfaceResistance: isFloorType ? 0.00 : 0.04,
         });
         setConstructionType(buildup.construction_type);
         if (buildup.floor_type) setFloorType(buildup.floor_type);
@@ -170,9 +172,23 @@ export default function AnalysisWorkspace() {
       if (ft) setFloorType(ft);
       if (p !== undefined) setPerimeter(p);
       if (a !== undefined) setArea(a);
-      setConstruction(prev => ({ ...prev, type: 'floor' }));
+      // Set floor-specific surface resistances per BS EN ISO 6946/13370
+      // Rsi = 0.17 for downward heat flow, Rse = 0.00 for ground contact
+      setConstruction(prev => ({ 
+        ...prev, 
+        type: 'floor',
+        internalSurfaceResistance: 0.17,
+        externalSurfaceResistance: 0.00,
+      }));
     } else {
-      setConstruction(prev => ({ ...prev, type: 'wall' }));
+      // Wall surface resistances per BS EN ISO 6946
+      // Rsi = 0.13, Rse = 0.04 for horizontal heat flow
+      setConstruction(prev => ({ 
+        ...prev, 
+        type: 'wall',
+        internalSurfaceResistance: 0.13,
+        externalSurfaceResistance: 0.04,
+      }));
     }
     
     // Save to database
@@ -205,13 +221,15 @@ export default function AnalysisWorkspace() {
           const buildup = project?.buildups.find(b => b.id === buildupId);
           if (!buildup || buildup.layers.length === 0) continue;
           
+          // Set correct surface resistances based on construction type per BS EN ISO 6946/13370
+          const isFloorType = buildup.construction_type === 'floor';
           const buildupConstruction: Construction = {
             id: buildup.id,
             name: buildup.name,
             type: buildup.construction_type,
             layers: buildup.layers,
-            internalSurfaceResistance: 0.13,
-            externalSurfaceResistance: 0.04,
+            internalSurfaceResistance: isFloorType ? 0.17 : 0.13,
+            externalSurfaceResistance: isFloorType ? 0.00 : 0.04,
           };
           
           const groundFloorParams = buildup.construction_type === 'floor' && 
@@ -463,10 +481,10 @@ export default function AnalysisWorkspace() {
       };
       
       if (!isFloor) {
-        // HORIZONTAL cross-section for walls: Internal (left) to External (right)
+        // HORIZONTAL cross-section for walls: External on LEFT, Internal on RIGHT
         pdf.setFontSize(8);
-        pdf.setTextColor(...colors.success);
-        pdf.text('Internal', margin, y + 5);
+        pdf.setTextColor(...colors.muted);
+        pdf.text('External', margin, y + 5);
         
         y += 10;
         
@@ -477,10 +495,8 @@ export default function AnalysisWorkspace() {
         
         let currentX = margin + 10;
         
-        // Reverse layers so internal is drawn first (from left)
-        const layersReversed = [...buildup.layers].reverse();
-        
-        layersReversed.forEach((layer, idx) => {
+        // Draw layers in order: first layer (external side) on left, last layer (internal side) on right
+        buildup.layers.forEach((layer, idx) => {
           const layerWidth = Math.max(layer.thickness * scale, 15);
           const { color, pattern } = getMaterialPattern(layer.material.category);
           
@@ -537,8 +553,8 @@ export default function AnalysisWorkspace() {
         });
         
         pdf.setFontSize(8);
-        pdf.setTextColor(...colors.muted);
-        pdf.text('External', currentX + 5, y + layerHeight / 2 + 3);
+        pdf.setTextColor(...colors.success);
+        pdf.text('Internal', currentX + 5, y + layerHeight / 2 + 3);
         
         y += layerHeight + 20;
       } else {
@@ -933,6 +949,8 @@ export default function AnalysisWorkspace() {
         // Draw material layer backgrounds for temp chart
         let layerStartX = diagramX;
         const plotWidth = diagramWidth;
+        const narrowTempLayers: {name: string, centerX: number, bottomY: number}[] = [];
+        
         buildup.layers.forEach((layer, idx) => {
           const sdValue = (layer.thickness / 1000) * layer.material.vapourResistivity;
           const layerWidth = Math.max((sdValue / maxSd) * plotWidth, 2); // Minimum 2mm width
@@ -947,14 +965,22 @@ export default function AnalysisWorkspace() {
           pdf.setLineWidth(0.3);
           pdf.rect(layerStartX, tempDiagramY, layerWidth, tempDiagramHeight);
           
-          // Add vertical material label inside layer (rotated)
-          pdf.setFontSize(5);
-          pdf.setTextColor(40, 40, 40);
-          const centerX = layerStartX + layerWidth / 2;
-          const centerY = tempDiagramY + tempDiagramHeight / 2;
-          // Truncate name but never use "..."
-          const labelText = layer.material.name.length > 20 ? layer.material.name.slice(0, 20) : layer.material.name;
-          pdf.text(labelText, centerX, centerY, { angle: 90, align: 'center' });
+          // Add vertical material label inside layer (if wide enough)
+          const shortName = layer.material.name.slice(0, 12);
+          if (layerWidth >= 6) {
+            pdf.setFontSize(4);
+            pdf.setTextColor(60, 60, 60);
+            const centerX = layerStartX + layerWidth / 2;
+            const centerY = tempDiagramY + tempDiagramHeight / 2;
+            pdf.text(shortName, centerX, centerY, { angle: 90, align: 'center' });
+          } else {
+            // Track narrow layers for reference
+            narrowTempLayers.push({
+              name: layer.material.name,
+              centerX: layerStartX + layerWidth / 2,
+              bottomY: tempDiagramY + tempDiagramHeight
+            });
+          }
           
           layerStartX += layerWidth;
         });
@@ -1006,6 +1032,7 @@ export default function AnalysisWorkspace() {
         
         // Draw material layer backgrounds for pressure chart
         layerStartX = diagramX;
+        const narrowPressureLayers: {name: string, centerX: number, bottomY: number}[] = [];
         buildup.layers.forEach((layer, idx) => {
           const sdValue = (layer.thickness / 1000) * layer.material.vapourResistivity;
           const layerWidth = Math.max((sdValue / maxSd) * plotWidth, 2);
@@ -1020,13 +1047,22 @@ export default function AnalysisWorkspace() {
           pdf.setLineWidth(0.3);
           pdf.rect(layerStartX, pressureDiagramY, layerWidth, pressureDiagramHeight);
           
-          // Add vertical material label inside layer
-          pdf.setFontSize(5);
-          pdf.setTextColor(40, 40, 40);
-          const centerX = layerStartX + layerWidth / 2;
-          const centerY = pressureDiagramY + pressureDiagramHeight / 2;
+          // Add vertical material label inside layer (if wide enough)
           const labelText = layer.material.name.length > 20 ? layer.material.name.slice(0, 20) : layer.material.name;
-          pdf.text(labelText, centerX, centerY, { angle: 90, align: 'center' });
+          if (layerWidth >= 8) {
+            pdf.setFontSize(5);
+            pdf.setTextColor(40, 40, 40);
+            const centerX = layerStartX + layerWidth / 2;
+            const centerY = pressureDiagramY + pressureDiagramHeight / 2;
+            pdf.text(labelText, centerX, centerY, { angle: 90, align: 'center' });
+          } else {
+            // Track narrow layers for external labeling
+            narrowPressureLayers.push({
+              name: layer.material.name,
+              centerX: layerStartX + layerWidth / 2,
+              bottomY: pressureDiagramY + pressureDiagramHeight
+            });
+          }
           
           layerStartX += layerWidth;
         });
@@ -1073,42 +1109,63 @@ export default function AnalysisWorkspace() {
           );
         }
         
-        // Find and mark condensation point (where lines cross/meet)
+        // Find and mark ALL condensation points (where lines cross/meet)
         // This is where partial VP exceeds or equals saturation VP
-        let condensationX: number | null = null;
-        let condensationY: number | null = null;
+        const condensationPoints: {x: number, y: number}[] = [];
+        
         for (let i = 0; i < vpData.length - 1; i++) {
           const p1 = vpData[i];
           const p2 = vpData[i + 1];
           // Check if lines cross in this segment
           const diff1 = p1.pressure - p1.saturation;
           const diff2 = p2.pressure - p2.saturation;
-          if ((diff1 <= 0 && diff2 > 0) || (diff1 >= 0 && diff2 < 0) || (diff1 === 0 || diff2 === 0)) {
+          
+          // Crossing point: lines change from one side to the other
+          if ((diff1 <= 0 && diff2 > 0) || (diff1 >= 0 && diff2 < 0)) {
             // Interpolate crossing point
             if (diff1 !== diff2) {
               const t = Math.abs(diff1) / (Math.abs(diff1) + Math.abs(diff2));
               const crossPos = p1.position + t * (p2.position - p1.position);
               const crossPressure = p1.pressure + t * (p2.pressure - p1.pressure);
-              condensationX = scaleX(crossPos);
-              condensationY = scaleY(crossPressure);
-              break;
+              condensationPoints.push({
+                x: scaleX(crossPos),
+                y: scaleY(crossPressure)
+              });
             }
           }
-          // Also check if pressure exceeds saturation at any point
-          if (p1.pressure >= p1.saturation && condensationX === null) {
-            condensationX = scaleX(p1.position);
-            condensationY = scaleY(p1.pressure);
+          
+          // Also mark points where they meet exactly (diff1 === 0)
+          if (diff1 === 0) {
+            condensationPoints.push({
+              x: scaleX(p1.position),
+              y: scaleY(p1.pressure)
+            });
           }
         }
         
-        // Draw condensation marker (red circle) where lines meet
-        if (condensationX !== null && condensationY !== null) {
+        // Check last point too
+        const lastPoint = vpData[vpData.length - 1];
+        if (lastPoint.pressure >= lastPoint.saturation) {
+          const exists = condensationPoints.some(cp => 
+            Math.abs(cp.x - scaleX(lastPoint.position)) < 1 && 
+            Math.abs(cp.y - scaleY(lastPoint.pressure)) < 1
+          );
+          if (!exists) {
+            condensationPoints.push({
+              x: scaleX(lastPoint.position),
+              y: scaleY(lastPoint.pressure)
+            });
+          }
+        }
+        
+        // Draw ALL condensation markers (red circle with black outline) where lines meet
+        condensationPoints.forEach(point => {
           pdf.setFillColor(239, 68, 68);
-          pdf.circle(condensationX, condensationY, 3, 'F');
+          pdf.circle(point.x, point.y, 3, 'F');
           pdf.setDrawColor(0, 0, 0);
           pdf.setLineWidth(0.5);
-          pdf.circle(condensationX, condensationY, 3, 'S');
-        }
+          pdf.circle(point.x, point.y, 3, 'S');
+        });
         
         // X-Axis label
         y = pressureDiagramY + pressureDiagramHeight + 10;
@@ -1152,16 +1209,45 @@ export default function AnalysisWorkspace() {
         
         y += 10;
         
-        // Condensation zone indicator - unified RED color
-        if (condensationX !== null || vpData.some(p => p.pressure >= p.saturation)) {
+        // Condensation zone indicator - unified RED color with BLACK outline matching chart
+        if (condensationPoints.length > 0 || vpData.some(p => p.pressure >= p.saturation)) {
           pdf.setFillColor(239, 68, 68);
           pdf.circle(margin + 4, y - 2, 2.5, 'F');
+          pdf.setDrawColor(0, 0, 0);
+          pdf.setLineWidth(0.4);
+          pdf.circle(margin + 4, y - 2, 2.5, 'S');
           pdf.setTextColor(239, 68, 68);
           pdf.setFont('helvetica', 'bold');
-          pdf.text('Condensation zone (pv ≥ psat)', margin + 10, y);
+          pdf.text('Condensation zone (pv >= psat)', margin + 10, y);
           y += 8;
         }
         
+        // Draw leader lines for narrow layers
+        if (narrowPressureLayers.length > 0) {
+          y += 5;
+          pdf.setFontSize(6);
+          pdf.setTextColor(...colors.muted);
+          pdf.text('Narrow layers (see leaders):', margin, y);
+          y += 4;
+          
+          narrowPressureLayers.forEach((item, idx) => {
+            // Draw leader line
+            pdf.setDrawColor(100, 100, 100);
+            pdf.setLineWidth(0.3);
+            const labelX = margin + 5 + (idx % 3) * 55;
+            const labelY = y + Math.floor(idx / 3) * 8;
+            pdf.line(item.centerX, item.bottomY, item.centerX, item.bottomY + 5);
+            pdf.line(item.centerX, item.bottomY + 5, labelX + 25, labelY - 2);
+            
+            // Wrapped label
+            const wrappedLabel = pdf.splitTextToSize(item.name, 50);
+            pdf.setTextColor(40, 40, 40);
+            pdf.text(wrappedLabel[0], labelX, labelY);
+          });
+          
+          y += Math.ceil(narrowPressureLayers.length / 3) * 8 + 5;
+        }
+
         // Material layers list
         y += 5;
         pdf.setFontSize(7);
