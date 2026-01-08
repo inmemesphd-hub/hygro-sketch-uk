@@ -32,6 +32,7 @@ import {
   Layers,
   Building2,
   Home,
+  Copy,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
@@ -52,6 +53,7 @@ export function ProjectManager({ onSelectBuildup, selectedBuildupId }: ProjectMa
     createBuildup,
     deleteBuildup,
     updateBuildup,
+    duplicateBuildup,
     loading 
   } = useProjects();
   
@@ -101,6 +103,14 @@ export function ProjectManager({ onSelectBuildup, selectedBuildupId }: ProjectMa
     setEditingBuildup(null);
     setNewProjectName('');
     setIsEditBuildupOpen(false);
+  };
+
+  const handleDuplicateBuildup = async (buildup: BuildupData, project: ProjectData) => {
+    const newBuildup = await duplicateBuildup(buildup.id);
+    if (newBuildup) {
+      setCurrentProject(project);
+      onSelectBuildup(newBuildup, project.id);
+    }
   };
 
   const handleSelectBuildup = (buildup: BuildupData, project: ProjectData) => {
@@ -238,7 +248,15 @@ export function ProjectManager({ onSelectBuildup, selectedBuildupId }: ProjectMa
                           </Button>
                         </DropdownMenuTrigger>
                         <DropdownMenuContent align="end">
-                          <DropdownMenuItem onClick={() => {
+                          <DropdownMenuItem onClick={(e) => {
+                            e.stopPropagation();
+                            handleDuplicateBuildup(buildup, project);
+                          }}>
+                            <Copy className="w-4 h-4 mr-2" />
+                            Duplicate
+                          </DropdownMenuItem>
+                          <DropdownMenuItem onClick={(e) => {
+                            e.stopPropagation();
                             setEditingBuildup(buildup);
                             setNewProjectName(buildup.name);
                             setIsEditBuildupOpen(true);
@@ -248,7 +266,8 @@ export function ProjectManager({ onSelectBuildup, selectedBuildupId }: ProjectMa
                           </DropdownMenuItem>
                           <DropdownMenuItem 
                             className="text-destructive"
-                            onClick={() => {
+                            onClick={(e) => {
+                              e.stopPropagation();
                               deleteBuildup(buildup.id);
                               if (selectedBuildupId === buildup.id) {
                                 onSelectBuildup(null, project.id);

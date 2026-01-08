@@ -91,7 +91,7 @@ export default function Auth() {
           </div>
           <CardTitle className="text-2xl">HygroTherm UK</CardTitle>
           <CardDescription>
-            2D Condensation Risk Analysis Tool
+            Condensation Risk Analysis Tool
           </CardDescription>
         </CardHeader>
         <CardContent>

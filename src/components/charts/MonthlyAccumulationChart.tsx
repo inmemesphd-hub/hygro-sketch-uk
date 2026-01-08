@@ -55,8 +55,8 @@ export function MonthlyAccumulationChart({ monthlyData, className }: MonthlyAccu
       </div>
       
       <div className="p-4" style={{ minHeight: 310 }}>
-        <div style={{ width: '100%', height: 280 }}>
-          <ResponsiveContainer width="100%" height="100%">
+        <div style={{ width: '100%', height: 280, position: 'relative' }}>
+          <ResponsiveContainer width="100%" height={280}>
             <ComposedChart data={chartData} margin={{ top: 10, right: 30, left: 10, bottom: 10 }}>
               <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
               <XAxis 

@@ -10,6 +10,7 @@ import { JunctionCanvas, FloorType } from '@/components/JunctionCanvas';
 import { GlastaDiagram, TemperatureProfile } from '@/components/charts/GlastaDiagram';
 import { MonthlyAccumulationChart } from '@/components/charts/MonthlyAccumulationChart';
 import { ResultsSummary } from '@/components/ResultsSummary';
+import { DetailedResultsPanel } from '@/components/DetailedResultsPanel';
 import { ProjectManager } from '@/components/ProjectManager';
 import { BuildupSelectionDialog } from '@/components/BuildupSelectionDialog';
 import { useProjects, BuildupData, ProjectData } from '@/hooks/useProjects';
@@ -1042,32 +1043,17 @@ export default function AnalysisWorkspace() {
                     />
                   </TabsContent>
 
-                  <TabsContent value="results" className="h-full m-0 overflow-auto">
+                  <TabsContent value="results" className="h-full m-0 overflow-hidden">
                     {analysisResult && (
-                      <div className="p-4 space-y-4">
-                        <div className={cn(
-                          "p-4 rounded-lg text-center",
-                          analysisResult.overallResult === 'pass'
-                            ? "bg-success/10 border border-success/30"
-                            : "bg-destructive/10 border border-destructive/30"
-                        )}>
-                          <div className={cn(
-                            "text-2xl font-bold",
-                            analysisResult.overallResult === 'pass' ? "text-success" : "text-destructive"
-                          )}>
-                            {analysisResult.overallResult === 'pass' ? 'PASS' : 'FAIL'}
-                          </div>
-                          <div className="text-xs text-muted-foreground mt-1">
-                            U-Value: {analysisResult.uValue} W/m²K
-                          </div>
-                          {analysisResult.uValueWithoutBridging && analysisResult.uValueWithoutBridging !== analysisResult.uValue && (
-                            <div className="text-xs text-muted-foreground">
-                              Without bridging: {analysisResult.uValueWithoutBridging} W/m²K
-                            </div>
-                          )}
-                        </div>
-
-                        <div className="flex items-center gap-2">
+                      <div className="h-full p-4 flex flex-col">
+                        <DetailedResultsPanel 
+                          result={analysisResult}
+                          climateData={climateData}
+                          layers={construction.layers}
+                          className="flex-1 overflow-hidden"
+                        />
+                        
+                        <div className="flex items-center gap-2 mt-4 pt-4 border-t border-border">
                           <Select value={exportFormat} onValueChange={(v) => setExportFormat(v as 'pdf' | 'word')}>
                             <SelectTrigger className="w-24">
                               <SelectValue />
