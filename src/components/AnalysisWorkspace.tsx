@@ -527,7 +527,10 @@ export default function AnalysisWorkspace() {
           pdf.text(materialShort.substring(0, 12), currentX + layerWidth / 2, y + layerHeight + 8, { align: 'center' });
           if (layer.bridging) {
             pdf.setTextColor(...colors.muted);
-            pdf.text(`(${layer.bridging.percentage}% bridge)`, currentX + layerWidth / 2, y + layerHeight + 12, { align: 'center' });
+            // Show bridge percentage AND material name
+            const bridgeMaterialShort = layer.bridging.material.name.split(' ')[0];
+            const bridgeLabel = `(${layer.bridging.percentage}% ${bridgeMaterialShort})`;
+            pdf.text(bridgeLabel.substring(0, 20), currentX + layerWidth / 2, y + layerHeight + 12, { align: 'center' });
           }
           
           currentX += layerWidth;
@@ -594,15 +597,17 @@ export default function AnalysisWorkspace() {
           pdf.setLineWidth(0.3);
           pdf.rect(margin, currentY, contentWidth, layerHeight);
           
-          pdf.setFontSize(7);
-          pdf.setTextColor(0, 0, 0);
-          let labelText = `${layer.thickness}mm ${layer.material.name}`;
-          if (layer.bridging) {
-            labelText += ` (${layer.bridging.percentage}% ${layer.bridging.material.name})`;
-          }
-          // Truncate long text
-          if (labelText.length > 60) labelText = labelText.substring(0, 57) + '...';
-          pdf.text(labelText, margin + 3, currentY + layerHeight / 2 + 2);
+        pdf.setFontSize(7);
+        pdf.setTextColor(0, 0, 0);
+        let labelText = `${layer.thickness}mm ${layer.material.name}`;
+        if (layer.bridging) {
+          labelText += ` (${layer.bridging.percentage}% ${layer.bridging.material.name})`;
+        }
+        // Wrap text if too long instead of truncating
+        const labelLines = pdf.splitTextToSize(labelText, contentWidth - 10);
+        labelLines.forEach((line: string, lineIdx: number) => {
+          pdf.text(line, margin + 3, currentY + layerHeight / 2 + 2 + (lineIdx * 4));
+        });
           
           currentY += layerHeight;
         });
@@ -631,23 +636,33 @@ export default function AnalysisWorkspace() {
       pdf.setTextColor(...colors.text);
       
       buildup.layers.forEach((layer, i) => {
-        const rowColor = i % 2 === 0 ? [255, 255, 255] : colors.lightBg;
-        pdf.setFillColor(...(rowColor as [number, number, number]));
-        pdf.rect(margin, y, contentWidth, 7, 'F');
-        
-        pdf.setFontSize(7);
-        pdf.text(`${i + 1}`, margin + 2, y + 5);
         let materialName = layer.material.name;
         if (layer.bridging) {
           materialName += ` (${layer.bridging.percentage}% ${layer.bridging.material.name})`;
         }
-        if (materialName.length > 40) materialName = materialName.substring(0, 37) + '...';
-        pdf.text(materialName, margin + 15, y + 5);
+        
+        // Wrap text to multiple lines if needed
+        const maxMaterialWidth = 65;
+        const materialLines = pdf.splitTextToSize(materialName, maxMaterialWidth);
+        const rowHeight = Math.max(7, materialLines.length * 5);
+        
+        const rowColor = i % 2 === 0 ? [255, 255, 255] : colors.lightBg;
+        pdf.setFillColor(...(rowColor as [number, number, number]));
+        pdf.rect(margin, y, contentWidth, rowHeight, 'F');
+        
+        pdf.setFontSize(7);
+        pdf.text(`${i + 1}`, margin + 2, y + 5);
+        
+        // Draw wrapped material name
+        materialLines.forEach((line: string, lineIdx: number) => {
+          pdf.text(line, margin + 15, y + 5 + (lineIdx * 4));
+        });
+        
         pdf.text(`${layer.thickness} mm`, margin + 85, y + 5);
         pdf.text(`${layer.material.thermalConductivity} W/mK`, margin + 110, y + 5);
         pdf.text(`${layer.material.vapourResistivity} MNs/gm`, margin + 140, y + 5);
         
-        y += 7;
+        y += rowHeight;
       });
       
       y += 5;
@@ -831,13 +846,17 @@ export default function AnalysisWorkspace() {
       pdf.setFont('helvetica', 'bold');
       pdf.text(`${buildup.name} - Glaser Diagram`, margin, 10);
       
-      y = 25;
+      y = 22;
       
-      // Month subtitle
-      pdf.setFontSize(9);
-      pdf.setTextColor(...colors.muted);
+      // Month subtitle prominently displayed
+      pdf.setFontSize(10);
+      pdf.setTextColor(...colors.header);
+      pdf.setFont('helvetica', 'bold');
+      pdf.text(`${worstMonth}`, margin, y);
       pdf.setFont('helvetica', 'normal');
-      pdf.text(`Worst case month: ${worstMonth}`, margin, y);
+      pdf.setFontSize(8);
+      pdf.setTextColor(...colors.muted);
+      pdf.text(' (Worst case month for condensation)', margin + pdf.getTextWidth(worstMonth) + 2, y);
       y += 8;
       
       // Layer color palette function
@@ -865,14 +884,10 @@ export default function AnalysisWorkspace() {
         return baseColor;
       };
       
-      // Glaser diagram with proper axes
-      const diagramHeight = 110;
-      const diagramWidth = contentWidth - 25; // Leave space for Y-axis label
-      const diagramX = margin + 25; // Offset for Y-axis labels
-      const diagramY = y;
-      
       // Get vapour pressure data from result
       const vpData = result.vapourPressureGradient;
+      const tempData = result.temperatureGradient;
+      
       if (vpData && vpData.length > 1) {
         // Calculate cumulative equivalent air thickness (Sd values)
         let cumulativeSd = 0;
@@ -884,7 +899,7 @@ export default function AnalysisWorkspace() {
           cumulativeSd += sdValue;
           sdPositions.push({ 
             sd: cumulativeSd, 
-            layerName: layer.material.name.length > 15 ? layer.material.name.slice(0, 12) + '...' : layer.material.name,
+            layerName: layer.material.name,
             position: vpData[Math.min(idx + 1, vpData.length - 1)]?.position || 0
           });
         });
@@ -895,107 +910,152 @@ export default function AnalysisWorkspace() {
         const minPressure = Math.min(...vpData.map(p => Math.min(p.pressure, p.saturation)));
         const pressureRange = maxPressure - minPressure || 1;
         
-        // Draw background
+        // Temperature data range
+        const tempMin = tempData ? Math.min(...tempData.map(t => t.temperature)) : 0;
+        const tempMax = tempData ? Math.max(...tempData.map(t => t.temperature)) : 20;
+        const tempRange = tempMax - tempMin || 1;
+        
+        // Diagram layout - Two charts stacked: Temperature on top, Pressure below
+        const tempDiagramHeight = 40;
+        const pressureDiagramHeight = 80;
+        const diagramWidth = contentWidth - 25;
+        const diagramX = margin + 25;
+        
+        // ===== TEMPERATURE CHART (TOP) =====
+        const tempDiagramY = y;
+        
+        // Draw temperature chart background with material colors
         pdf.setFillColor(255, 255, 255);
-        pdf.roundedRect(diagramX, diagramY, diagramWidth, diagramHeight, 2, 2, 'F');
-        pdf.setDrawColor(...colors.border);
-        pdf.setLineWidth(0.3);
-        pdf.rect(diagramX, diagramY, diagramWidth, diagramHeight);
+        pdf.setDrawColor(0, 0, 0);
+        pdf.setLineWidth(0.5);
+        pdf.rect(diagramX, tempDiagramY, diagramWidth, tempDiagramHeight);
         
-        // Draw colored material layer backgrounds
-        let layerStartX = diagramX + 5;
-        const plotWidth = diagramWidth - 10;
-        const plotHeight = diagramHeight - 10;
-        let cumulativeSdForLayers = 0;
-        
+        // Draw material layer backgrounds for temp chart
+        let layerStartX = diagramX;
+        const plotWidth = diagramWidth;
         buildup.layers.forEach((layer, idx) => {
           const sdValue = (layer.thickness / 1000) * layer.material.vapourResistivity;
-          const layerWidth = (sdValue / maxSd) * plotWidth;
+          const layerWidth = Math.max((sdValue / maxSd) * plotWidth, 2); // Minimum 2mm width
           const layerColor = getLayerColor(layer.material.category, idx);
           
           // Draw colored background rectangle
           pdf.setFillColor(...layerColor);
-          pdf.rect(layerStartX, diagramY + 5, layerWidth, plotHeight, 'F');
+          pdf.rect(layerStartX, tempDiagramY, layerWidth, tempDiagramHeight, 'F');
           
-          // Draw layer boundary (vertical line)
-          pdf.setDrawColor(100, 100, 100);
+          // Draw black border around each layer
+          pdf.setDrawColor(0, 0, 0);
           pdf.setLineWidth(0.3);
-          pdf.line(layerStartX + layerWidth, diagramY + 5, layerStartX + layerWidth, diagramY + diagramHeight - 5);
+          pdf.rect(layerStartX, tempDiagramY, layerWidth, tempDiagramHeight);
           
-          // Add rotated material label inside layer (if width allows)
-          if (layerWidth > 12) {
-            pdf.setFontSize(6);
-            pdf.setTextColor(60, 60, 60);
-            const labelText = layer.material.name.length > 18 
-              ? layer.material.name.slice(0, 15) + '...' 
-              : layer.material.name;
-            // Approximate vertical text by drawing at center
-            const centerX = layerStartX + layerWidth / 2;
-            const centerY = diagramY + diagramHeight / 2;
-            pdf.text(labelText, centerX, centerY, { angle: 90, align: 'center' });
-          }
+          // Add vertical material label inside layer (rotated)
+          pdf.setFontSize(5);
+          pdf.setTextColor(40, 40, 40);
+          const centerX = layerStartX + layerWidth / 2;
+          const centerY = tempDiagramY + tempDiagramHeight / 2;
+          // Truncate name but never use "..."
+          const labelText = layer.material.name.length > 20 ? layer.material.name.slice(0, 20) : layer.material.name;
+          pdf.text(labelText, centerX, centerY, { angle: 90, align: 'center' });
           
-          cumulativeSdForLayers += sdValue;
           layerStartX += layerWidth;
         });
         
-        // Y-Axis label (Pressure)
-        pdf.setFontSize(8);
+        // Temperature Y-axis label
+        pdf.setFontSize(7);
         pdf.setTextColor(...colors.text);
         pdf.setFont('helvetica', 'bold');
-        // Rotated text simulation - vertical text
-        const yAxisLabel = 'Pressure (Pa)';
-        pdf.text(yAxisLabel, margin, diagramY + diagramHeight / 2, { angle: 90 });
+        pdf.text('Temperature (°C)', margin, tempDiagramY + tempDiagramHeight / 2, { angle: 90 });
         
-        // Y-Axis tick marks and values
+        // Temperature Y-axis ticks
         pdf.setFont('helvetica', 'normal');
-        pdf.setFontSize(6);
+        pdf.setFontSize(5);
+        const tempTicks = 3;
+        for (let i = 0; i <= tempTicks; i++) {
+          const temp = tempMin + (tempRange * i / tempTicks);
+          const yPos = tempDiagramY + tempDiagramHeight - (i / tempTicks) * tempDiagramHeight;
+          pdf.setDrawColor(...colors.border);
+          pdf.line(diagramX - 2, yPos, diagramX, yPos);
+          pdf.text(temp.toFixed(0), diagramX - 3, yPos + 1, { align: 'right' });
+        }
+        
+        // Scale functions for temperature
+        const scaleXT = (pos: number) => diagramX + (pos / maxPosition) * diagramWidth;
+        const scaleYT = (temp: number) => tempDiagramY + tempDiagramHeight - ((temp - tempMin) / tempRange) * tempDiagramHeight;
+        
+        // Draw temperature line (green)
+        if (tempData && tempData.length > 1) {
+          pdf.setDrawColor(34, 139, 34); // Forest green
+          pdf.setLineWidth(1);
+          for (let i = 1; i < tempData.length; i++) {
+            pdf.line(
+              scaleXT(tempData[i-1].position), scaleYT(tempData[i-1].temperature),
+              scaleXT(tempData[i].position), scaleYT(tempData[i].temperature)
+            );
+          }
+        }
+        
+        y = tempDiagramY + tempDiagramHeight + 5;
+        
+        // ===== PRESSURE CHART (BOTTOM) =====
+        const pressureDiagramY = y;
+        
+        // Draw pressure chart background
+        pdf.setFillColor(255, 255, 255);
+        pdf.setDrawColor(0, 0, 0);
+        pdf.setLineWidth(0.5);
+        pdf.rect(diagramX, pressureDiagramY, diagramWidth, pressureDiagramHeight);
+        
+        // Draw material layer backgrounds for pressure chart
+        layerStartX = diagramX;
+        buildup.layers.forEach((layer, idx) => {
+          const sdValue = (layer.thickness / 1000) * layer.material.vapourResistivity;
+          const layerWidth = Math.max((sdValue / maxSd) * plotWidth, 2);
+          const layerColor = getLayerColor(layer.material.category, idx);
+          
+          // Draw colored background rectangle
+          pdf.setFillColor(...layerColor);
+          pdf.rect(layerStartX, pressureDiagramY, layerWidth, pressureDiagramHeight, 'F');
+          
+          // Draw black border around each layer
+          pdf.setDrawColor(0, 0, 0);
+          pdf.setLineWidth(0.3);
+          pdf.rect(layerStartX, pressureDiagramY, layerWidth, pressureDiagramHeight);
+          
+          // Add vertical material label inside layer
+          pdf.setFontSize(5);
+          pdf.setTextColor(40, 40, 40);
+          const centerX = layerStartX + layerWidth / 2;
+          const centerY = pressureDiagramY + pressureDiagramHeight / 2;
+          const labelText = layer.material.name.length > 20 ? layer.material.name.slice(0, 20) : layer.material.name;
+          pdf.text(labelText, centerX, centerY, { angle: 90, align: 'center' });
+          
+          layerStartX += layerWidth;
+        });
+        
+        // Pressure Y-axis label
+        pdf.setFontSize(7);
+        pdf.setTextColor(...colors.text);
+        pdf.setFont('helvetica', 'bold');
+        pdf.text('Pressure (Pa)', margin, pressureDiagramY + pressureDiagramHeight / 2, { angle: 90 });
+        
+        // Pressure Y-axis ticks
+        pdf.setFont('helvetica', 'normal');
+        pdf.setFontSize(5);
         const yTicks = 5;
         for (let i = 0; i <= yTicks; i++) {
           const pressure = minPressure + (pressureRange * i / yTicks);
-          const yPos = diagramY + diagramHeight - 5 - (i / yTicks) * (diagramHeight - 10);
+          const yPos = pressureDiagramY + pressureDiagramHeight - (i / yTicks) * pressureDiagramHeight;
           pdf.setDrawColor(...colors.border);
           pdf.line(diagramX - 2, yPos, diagramX, yPos);
           pdf.text(Math.round(pressure).toString(), diagramX - 3, yPos + 1, { align: 'right' });
         }
         
-        // X-Axis label (Cumulative Sd)
-        pdf.setFontSize(8);
-        pdf.setFont('helvetica', 'bold');
-        pdf.text('Cumulative Equivalent Air Thickness (m)', diagramX + diagramWidth / 2, diagramY + diagramHeight + 15, { align: 'center' });
-        
-        // X-Axis tick marks
-        pdf.setFont('helvetica', 'normal');
-        pdf.setFontSize(6);
-        const xTicks = 5;
-        for (let i = 0; i <= xTicks; i++) {
-          const sdVal = (maxSd * i / xTicks).toFixed(2);
-          const xPos = diagramX + 5 + (i / xTicks) * (diagramWidth - 10);
-          pdf.setDrawColor(...colors.border);
-          pdf.line(xPos, diagramY + diagramHeight, xPos, diagramY + diagramHeight + 2);
-          pdf.text(sdVal, xPos, diagramY + diagramHeight + 7, { align: 'center' });
-        }
-        
-        // Scale functions
-        const scaleX = (pos: number) => diagramX + 5 + (pos / maxPosition) * (diagramWidth - 10);
-        const scaleY = (pressure: number) => diagramY + diagramHeight - 5 - ((pressure - minPressure) / pressureRange) * (diagramHeight - 10);
-        
-        // Draw material layer boundaries (vertical dashed lines)
-        pdf.setDrawColor(180, 180, 180);
-        pdf.setLineWidth(0.2);
-        let runningPos = 0;
-        buildup.layers.forEach((layer, idx) => {
-          runningPos += layer.thickness;
-          const xPos = scaleX(runningPos);
-          // Dashed line
-          for (let dashY = diagramY + 5; dashY < diagramY + diagramHeight - 5; dashY += 4) {
-            pdf.line(xPos, dashY, xPos, Math.min(dashY + 2, diagramY + diagramHeight - 5));
-          }
-        });
+        // Scale functions for pressure
+        const scaleX = (pos: number) => diagramX + (pos / maxPosition) * diagramWidth;
+        const scaleY = (pressure: number) => pressureDiagramY + pressureDiagramHeight - ((pressure - minPressure) / pressureRange) * pressureDiagramHeight;
         
         // Draw saturation pressure line (blue)
         pdf.setDrawColor(59, 130, 246);
-        pdf.setLineWidth(0.8);
+        pdf.setLineWidth(1);
         for (let i = 1; i < vpData.length; i++) {
           pdf.line(
             scaleX(vpData[i-1].position), scaleY(vpData[i-1].saturation),
@@ -1005,7 +1065,7 @@ export default function AnalysisWorkspace() {
         
         // Draw vapour pressure line (red)
         pdf.setDrawColor(239, 68, 68);
-        pdf.setLineWidth(0.8);
+        pdf.setLineWidth(1);
         for (let i = 1; i < vpData.length; i++) {
           pdf.line(
             scaleX(vpData[i-1].position), scaleY(vpData[i-1].pressure),
@@ -1013,72 +1073,125 @@ export default function AnalysisWorkspace() {
           );
         }
         
-        // Mark condensation zones (where partial > saturation)
-        const condensationPoints = vpData.filter(p => p.pressure > p.saturation);
-        if (condensationPoints.length > 0) {
-          pdf.setFillColor(239, 68, 68, 0.3);
-          condensationPoints.forEach(cp => {
-            const cx = scaleX(cp.position);
-            const cy = scaleY(cp.pressure);
-            pdf.circle(cx, cy, 2, 'F');
-          });
+        // Find and mark condensation point (where lines cross/meet)
+        // This is where partial VP exceeds or equals saturation VP
+        let condensationX: number | null = null;
+        let condensationY: number | null = null;
+        for (let i = 0; i < vpData.length - 1; i++) {
+          const p1 = vpData[i];
+          const p2 = vpData[i + 1];
+          // Check if lines cross in this segment
+          const diff1 = p1.pressure - p1.saturation;
+          const diff2 = p2.pressure - p2.saturation;
+          if ((diff1 <= 0 && diff2 > 0) || (diff1 >= 0 && diff2 < 0) || (diff1 === 0 || diff2 === 0)) {
+            // Interpolate crossing point
+            if (diff1 !== diff2) {
+              const t = Math.abs(diff1) / (Math.abs(diff1) + Math.abs(diff2));
+              const crossPos = p1.position + t * (p2.position - p1.position);
+              const crossPressure = p1.pressure + t * (p2.pressure - p1.pressure);
+              condensationX = scaleX(crossPos);
+              condensationY = scaleY(crossPressure);
+              break;
+            }
+          }
+          // Also check if pressure exceeds saturation at any point
+          if (p1.pressure >= p1.saturation && condensationX === null) {
+            condensationX = scaleX(p1.position);
+            condensationY = scaleY(p1.pressure);
+          }
         }
         
-        // Material labels below diagram
-        y = diagramY + diagramHeight + 22;
+        // Draw condensation marker (red circle) where lines meet
+        if (condensationX !== null && condensationY !== null) {
+          pdf.setFillColor(239, 68, 68);
+          pdf.circle(condensationX, condensationY, 3, 'F');
+          pdf.setDrawColor(0, 0, 0);
+          pdf.setLineWidth(0.5);
+          pdf.circle(condensationX, condensationY, 3, 'S');
+        }
+        
+        // X-Axis label
+        y = pressureDiagramY + pressureDiagramHeight + 10;
+        pdf.setFontSize(7);
+        pdf.setFont('helvetica', 'bold');
+        pdf.setTextColor(...colors.text);
+        pdf.text('Cumulative Equivalent Air Thickness (m)', diagramX + diagramWidth / 2, y, { align: 'center' });
+        
+        // X-Axis tick marks
+        pdf.setFont('helvetica', 'normal');
+        pdf.setFontSize(5);
+        const xTicks = 6;
+        for (let i = 0; i <= xTicks; i++) {
+          const sdVal = (maxSd * i / xTicks).toFixed(2);
+          const xPos = diagramX + (i / xTicks) * diagramWidth;
+          pdf.setDrawColor(...colors.border);
+          pdf.line(xPos, pressureDiagramY + pressureDiagramHeight, xPos, pressureDiagramY + pressureDiagramHeight + 2);
+          pdf.text(sdVal, xPos, pressureDiagramY + pressureDiagramHeight + 6, { align: 'center' });
+        }
+        
+        // Legend
+        y += 12;
+        pdf.setFontSize(7);
+        
+        // Temperature legend (green)
+        pdf.setDrawColor(34, 139, 34);
+        pdf.setLineWidth(1);
+        pdf.line(margin, y, margin + 12, y);
+        pdf.setTextColor(...colors.text);
+        pdf.text('Temperature (°C)', margin + 15, y + 2);
+        
+        // Saturation VP legend (blue)
+        pdf.setDrawColor(59, 130, 246);
+        pdf.line(margin + 55, y, margin + 67, y);
+        pdf.text('Saturated VP (Pa)', margin + 70, y + 2);
+        
+        // Partial VP legend (red)
+        pdf.setDrawColor(239, 68, 68);
+        pdf.line(margin + 115, y, margin + 127, y);
+        pdf.text('Partial VP (Pa)', margin + 130, y + 2);
+        
+        y += 10;
+        
+        // Condensation zone indicator - unified RED color
+        if (condensationX !== null || vpData.some(p => p.pressure >= p.saturation)) {
+          pdf.setFillColor(239, 68, 68);
+          pdf.circle(margin + 4, y - 2, 2.5, 'F');
+          pdf.setTextColor(239, 68, 68);
+          pdf.setFont('helvetica', 'bold');
+          pdf.text('Condensation zone (pv ≥ psat)', margin + 10, y);
+          y += 8;
+        }
+        
+        // Material layers list
+        y += 5;
         pdf.setFontSize(7);
         pdf.setFont('helvetica', 'bold');
         pdf.setTextColor(...colors.header);
         pdf.text('Material Layers:', margin, y);
         
-        y += 6;
+        y += 5;
         pdf.setFont('helvetica', 'normal');
         pdf.setTextColor(...colors.text);
-        runningPos = 0;
         buildup.layers.forEach((layer, idx) => {
-          const layerName = layer.material.name.length > 25 ? layer.material.name.slice(0, 22) + '...' : layer.material.name;
           const sdVal = ((layer.thickness / 1000) * layer.material.vapourResistivity).toFixed(3);
-          const text = `${idx + 1}. ${layerName} (${layer.thickness}mm, Sd=${sdVal}m)`;
-          pdf.text(text, margin, y);
-          y += 5;
-          if (y > pageHeight - 40) {
-            y = 30;
-            // Don't add page mid-layers, just stop
+          const text = `${idx + 1}. ${layer.material.name} (${layer.thickness}mm, Sd=${sdVal}m)`;
+          const wrappedText = pdf.splitTextToSize(text, contentWidth);
+          wrappedText.forEach((line: string) => {
+            pdf.text(line, margin, y);
+            y += 4;
+          });
+          if (y > pageHeight - 30) {
+            pdf.addPage();
+            y = 25;
           }
         });
         
-        y += 8;
+        y += 5;
       } else {
         pdf.setTextColor(...colors.muted);
         pdf.setFontSize(10);
         pdf.text('Vapour pressure data not available for this build-up.', margin, y + 20);
         y += 40;
-      }
-      
-      // Legend
-      pdf.setFontSize(8);
-      
-      // Blue line legend
-      pdf.setDrawColor(59, 130, 246);
-      pdf.setLineWidth(1);
-      pdf.line(margin, y, margin + 15, y);
-      pdf.setTextColor(...colors.text);
-      pdf.text('Saturated Vapour Pressure (psat)', margin + 20, y + 2);
-      
-      // Red line legend
-      pdf.setDrawColor(239, 68, 68);
-      pdf.line(margin + 100, y, margin + 115, y);
-      pdf.text('Partial Vapour Pressure (pv)', margin + 120, y + 2);
-      
-      y += 12;
-      
-      // Condensation zone indicator
-      if (vpData && vpData.some(p => p.pressure > p.saturation)) {
-        pdf.setFillColor(239, 68, 68);
-        pdf.circle(margin + 4, y - 2, 2, 'F');
-        pdf.setTextColor(...colors.fail);
-        pdf.text('Condensation zone (pv > psat)', margin + 10, y);
-        y += 8;
       }
       
       // Note about diagram
