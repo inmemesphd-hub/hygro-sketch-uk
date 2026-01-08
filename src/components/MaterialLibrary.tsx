@@ -188,8 +188,8 @@ export function MaterialLibrary({
             </div>
           </ScrollArea>
 
-          {/* Materials Grid - Constrained height to ensure categories are visible */}
-          <ScrollArea className="flex-1 min-h-0 max-h-[400px] border rounded-lg bg-secondary/20">
+          {/* Materials Grid - With vertical scrollbar */}
+          <ScrollArea className="flex-1 min-h-0 h-[350px] border rounded-lg bg-secondary/20">
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3 p-4">
               {filteredMaterials.map(material => <button key={material.id} onClick={() => handleSelect(material)} className={cn("material-layer text-left hover:border-primary/50 transition-all group", material.isCustom && "border-primary/30 bg-primary/5")}>
                   <div className="flex items-start justify-between">

@@ -58,7 +58,7 @@ export function DetailedResultsPanel({ result, climateData, layers, className }:
           <TabsTrigger value="layers" className="text-xs">Layers</TabsTrigger>
         </TabsList>
 
-        <ScrollArea className="flex-1">
+        <ScrollArea className="flex-1 h-[350px]">
           <TabsContent value="summary" className="mt-0 space-y-4">
             {/* Key Metrics */}
             <div className="grid grid-cols-2 gap-3">
@@ -162,6 +162,7 @@ export function DetailedResultsPanel({ result, climateData, layers, className }:
           </TabsContent>
 
           <TabsContent value="monthly" className="mt-0">
+            <ScrollArea className="h-[280px]">
             <div className="rounded-lg border overflow-hidden">
               <Table>
                 <TableHeader>
@@ -192,9 +193,11 @@ export function DetailedResultsPanel({ result, climateData, layers, className }:
               </Table>
             </div>
             <p className="text-xs text-muted-foreground mt-2">All values in g/m²</p>
+            </ScrollArea>
           </TabsContent>
 
           <TabsContent value="surface" className="mt-0">
+            <ScrollArea className="h-[280px]">
             <div className="rounded-lg border overflow-hidden">
               <Table>
                 <TableHeader>
@@ -233,9 +236,11 @@ export function DetailedResultsPanel({ result, climateData, layers, className }:
                 </TableBody>
               </Table>
             </div>
+            </ScrollArea>
           </TabsContent>
 
           <TabsContent value="layers" className="mt-0">
+            <ScrollArea className="h-[280px]">
             <div className="rounded-lg border overflow-hidden">
               <Table>
                 <TableHeader>
@@ -270,6 +275,7 @@ export function DetailedResultsPanel({ result, climateData, layers, className }:
               </Table>
             </div>
             <p className="text-xs text-muted-foreground mt-2">λ = Thermal conductivity (W/mK), μ = Vapour resistance factor</p>
+            </ScrollArea>
           </TabsContent>
         </ScrollArea>
       </Tabs>
