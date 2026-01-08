@@ -189,8 +189,8 @@ export function MaterialLibrary({
           </ScrollArea>
 
           {/* Materials Grid - With vertical scrollbar */}
-          <ScrollArea className="flex-1 min-h-0 h-[350px] border rounded-lg bg-secondary/20">
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-3 p-4">
+          <div className="flex-1 min-h-0 h-[350px] border rounded-lg bg-secondary/20 overflow-y-auto scrollbar-visible">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3 p-4 pr-6">
               {filteredMaterials.map(material => <button key={material.id} onClick={() => handleSelect(material)} className={cn("material-layer text-left hover:border-primary/50 transition-all group", material.isCustom && "border-primary/30 bg-primary/5")}>
                   <div className="flex items-start justify-between">
                     <div className="flex-1 min-w-0">
@@ -238,7 +238,7 @@ export function MaterialLibrary({
                   No materials found. Try a different search or create a custom material.
                 </div>}
             </div>
-          </ScrollArea>
+          </div>
         </div>
       </DialogContent>
     </Dialog>;

@@ -133,10 +133,19 @@ export default function AnalysisWorkspace() {
           setClimateData(getRegionalClimateData(regionId));
         });
         
-        setAnalysisResult(null); // Clear previous results
+        // Only clear results if we're switching to a buildup without cached results
+        // and NOT currently in the results tab
+        if (activeTab !== 'results') {
+          const cachedResult = multiAnalysisResults.get(buildup.id);
+          if (cachedResult) {
+            setAnalysisResult(cachedResult);
+          } else {
+            setAnalysisResult(null);
+          }
+        }
       }
     }
-  }, [selectedBuildupId, selectedProjectId, projects]);
+  }, [selectedBuildupId, selectedProjectId, projects, activeTab, multiAnalysisResults]);
 
   // Auto-save buildup changes
   const handleConstructionChange = (newConstruction: Construction) => {
@@ -454,21 +463,24 @@ export default function AnalysisWorkspace() {
       };
       
       if (!isFloor) {
-        // VERTICAL cross-section for walls
+        // HORIZONTAL cross-section for walls: Internal (left) to External (right)
         pdf.setFontSize(8);
-        pdf.setTextColor(...colors.muted);
-        pdf.text('External (Ground)', margin, y + 5);
+        pdf.setTextColor(...colors.success);
+        pdf.text('Internal', margin, y + 5);
         
         y += 10;
         
         const totalThickness = buildup.layers.reduce((sum, l) => sum + l.thickness, 0);
-        const maxLayerWidth = contentWidth - 20;
+        const maxLayerWidth = contentWidth - 30;
         const scale = Math.min(0.15, maxLayerWidth / totalThickness);
         const layerHeight = 30;
         
         let currentX = margin + 10;
         
-        buildup.layers.forEach((layer, idx) => {
+        // Reverse layers so internal is drawn first (from left)
+        const layersReversed = [...buildup.layers].reverse();
+        
+        layersReversed.forEach((layer, idx) => {
           const layerWidth = Math.max(layer.thickness * scale, 15);
           const { color, pattern } = getMaterialPattern(layer.material.category);
           
@@ -494,7 +506,7 @@ export default function AnalysisWorkspace() {
             }
           }
           
-          // Bridging indication (vertical studs for floor)
+          // Bridging indication
           if (layer.bridging) {
             pdf.setFillColor(80, 80, 80);
             const studHeight = 3;
@@ -522,15 +534,15 @@ export default function AnalysisWorkspace() {
         });
         
         pdf.setFontSize(8);
-        pdf.setTextColor(...colors.success);
-        pdf.text('Internal', currentX + 5, y + layerHeight / 2 + 3);
+        pdf.setTextColor(...colors.muted);
+        pdf.text('External', currentX + 5, y + layerHeight / 2 + 3);
         
         y += layerHeight + 20;
       } else {
-        // HORIZONTAL cross-section for floors
+        // VERTICAL cross-section for floors: Internal (top) to Ground (bottom)
         pdf.setFontSize(8);
-        pdf.setTextColor(...colors.primary);
-        pdf.text('External', margin, y + 5);
+        pdf.setTextColor(...colors.success);
+        pdf.text('Internal', margin, y + 5);
         
         y += 10;
         
@@ -539,7 +551,10 @@ export default function AnalysisWorkspace() {
         const maxLayerHeight = 80;
         const scale = Math.min(0.2, maxLayerHeight / totalThickness);
         
-        buildup.layers.forEach((layer, idx) => {
+        // Reverse layers so internal is at top
+        const layersReversed = [...buildup.layers].reverse();
+        
+        layersReversed.forEach((layer, idx) => {
           const layerHeight = Math.max(layer.thickness * scale, 12);
           const { color, pattern } = getMaterialPattern(layer.material.category);
           
@@ -593,8 +608,8 @@ export default function AnalysisWorkspace() {
         });
         
         pdf.setFontSize(8);
-        pdf.setTextColor(...colors.success);
-        pdf.text('Internal', margin, currentY + 8);
+        pdf.setTextColor(...colors.muted);
+        pdf.text('Ground', margin, currentY + 8);
         
         y = currentY + 15;
       }
@@ -799,6 +814,16 @@ export default function AnalysisWorkspace() {
       // Glaser Diagram page for this specific buildup
       pdf.addPage();
       
+      // Find worst month (highest condensation risk)
+      let worstMonth = 'January';
+      let worstCondensation = 0;
+      result.monthlyData.forEach((data, idx) => {
+        if (data.condensationAmount > worstCondensation) {
+          worstCondensation = data.condensationAmount;
+          worstMonth = climateData[idx]?.month || 'January';
+        }
+      });
+      
       pdf.setFillColor(...colors.primary);
       pdf.rect(0, 0, pageWidth, 15, 'F');
       pdf.setTextColor(255, 255, 255);
@@ -807,6 +832,38 @@ export default function AnalysisWorkspace() {
       pdf.text(`${buildup.name} - Glaser Diagram`, margin, 10);
       
       y = 25;
+      
+      // Month subtitle
+      pdf.setFontSize(9);
+      pdf.setTextColor(...colors.muted);
+      pdf.setFont('helvetica', 'normal');
+      pdf.text(`Worst case month: ${worstMonth}`, margin, y);
+      y += 8;
+      
+      // Layer color palette function
+      const getLayerColor = (category: string, idx: number): [number, number, number] => {
+        const categoryColors: Record<string, [number, number, number]> = {
+          'masonry': [169, 169, 169],
+          'insulation': [255, 218, 185],
+          'concrete': [190, 190, 190],
+          'timber': [210, 180, 140],
+          'membrane': [173, 216, 230],
+          'plasterboard': [245, 245, 220],
+          'metal': [192, 192, 192],
+          'airgap': [240, 248, 255],
+          'render': [255, 200, 150],
+          'cladding': [205, 133, 63],
+          'flooring': [222, 184, 135],
+          'glazing': [200, 230, 250],
+          'custom': [220, 220, 220],
+        };
+        const baseColor = categoryColors[category] || [200, 200, 200];
+        // Alternate shades for adjacent layers
+        if (idx % 2 === 1) {
+          return baseColor.map(c => Math.min(255, c + 20)) as [number, number, number];
+        }
+        return baseColor;
+      };
       
       // Glaser diagram with proper axes
       const diagramHeight = 110;
@@ -839,11 +896,48 @@ export default function AnalysisWorkspace() {
         const pressureRange = maxPressure - minPressure || 1;
         
         // Draw background
-        pdf.setFillColor(250, 250, 250);
+        pdf.setFillColor(255, 255, 255);
         pdf.roundedRect(diagramX, diagramY, diagramWidth, diagramHeight, 2, 2, 'F');
         pdf.setDrawColor(...colors.border);
         pdf.setLineWidth(0.3);
         pdf.rect(diagramX, diagramY, diagramWidth, diagramHeight);
+        
+        // Draw colored material layer backgrounds
+        let layerStartX = diagramX + 5;
+        const plotWidth = diagramWidth - 10;
+        const plotHeight = diagramHeight - 10;
+        let cumulativeSdForLayers = 0;
+        
+        buildup.layers.forEach((layer, idx) => {
+          const sdValue = (layer.thickness / 1000) * layer.material.vapourResistivity;
+          const layerWidth = (sdValue / maxSd) * plotWidth;
+          const layerColor = getLayerColor(layer.material.category, idx);
+          
+          // Draw colored background rectangle
+          pdf.setFillColor(...layerColor);
+          pdf.rect(layerStartX, diagramY + 5, layerWidth, plotHeight, 'F');
+          
+          // Draw layer boundary (vertical line)
+          pdf.setDrawColor(100, 100, 100);
+          pdf.setLineWidth(0.3);
+          pdf.line(layerStartX + layerWidth, diagramY + 5, layerStartX + layerWidth, diagramY + diagramHeight - 5);
+          
+          // Add rotated material label inside layer (if width allows)
+          if (layerWidth > 12) {
+            pdf.setFontSize(6);
+            pdf.setTextColor(60, 60, 60);
+            const labelText = layer.material.name.length > 18 
+              ? layer.material.name.slice(0, 15) + '...' 
+              : layer.material.name;
+            // Approximate vertical text by drawing at center
+            const centerX = layerStartX + layerWidth / 2;
+            const centerY = diagramY + diagramHeight / 2;
+            pdf.text(labelText, centerX, centerY, { angle: 90, align: 'center' });
+          }
+          
+          cumulativeSdForLayers += sdValue;
+          layerStartX += layerWidth;
+        });
         
         // Y-Axis label (Pressure)
         pdf.setFontSize(8);
@@ -1269,23 +1363,33 @@ export default function AnalysisWorkspace() {
                             <label className="text-xs text-muted-foreground mb-2 block">Select Build-up</label>
                             <Select 
                               value={selectedBuildupId || ''} 
-                              onValueChange={(id) => {
+                            onValueChange={(id) => {
+                                if (!id) return;
+                                
                                 const result = multiAnalysisResults.get(id);
                                 const project = projects.find(p => p.id === selectedProjectId);
                                 const buildup = project?.buildups.find(b => b.id === id);
                                 
-                                if (result && buildup) {
-                                  setSelectedBuildupId(id);
-                                  setAnalysisResult(result);
-                                  setConstruction({
-                                    id: buildup.id,
-                                    name: buildup.name,
-                                    type: buildup.construction_type,
-                                    layers: buildup.layers,
-                                    internalSurfaceResistance: 0.13,
-                                    externalSurfaceResistance: 0.04,
-                                  });
+                                // Only update if we have valid cached results
+                                if (!result) {
+                                  console.warn('No cached result found for buildup:', id);
+                                  return;
                                 }
+                                if (!buildup) {
+                                  console.warn('Buildup not found:', id);
+                                  return;
+                                }
+                                
+                                setSelectedBuildupId(id);
+                                setAnalysisResult(result);
+                                setConstruction({
+                                  id: buildup.id,
+                                  name: buildup.name,
+                                  type: buildup.construction_type,
+                                  layers: buildup.layers,
+                                  internalSurfaceResistance: 0.13,
+                                  externalSurfaceResistance: 0.04,
+                                });
                               }}
                             >
                               <SelectTrigger className="w-full">
