@@ -1,4 +1,4 @@
-import { useMemo, useState, useRef, useEffect } from 'react';
+import { useMemo, useState, useRef, useEffect, useCallback } from 'react';
 import { AnalysisResult, ClimateData, ConstructionLayer } from '@/types/materials';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ComposedChart, Area, ReferenceLine } from 'recharts';
 import { cn } from '@/lib/utils';
@@ -18,6 +18,8 @@ const months = [
   'July', 'August', 'September', 'October', 'November', 'December'
 ];
 
+const CHART_HEIGHT = 350;
+
 export function GlastaDiagram({ 
   result, 
   climateData,
@@ -27,30 +29,50 @@ export function GlastaDiagram({
   onMonthChange
 }: GlastaDiagramProps) {
   const containerRef = useRef<HTMLDivElement>(null);
-  const [dimensions, setDimensions] = useState({ width: 600, height: 350 });
+  const [chartWidth, setChartWidth] = useState(0);
+  const [isReady, setIsReady] = useState(false);
   const [internalSelectedMonth, setInternalSelectedMonth] = useState<string>('worst');
   const currentMonth = selectedMonth ?? internalSelectedMonth;
   const handleMonthChange = onMonthChange ?? setInternalSelectedMonth;
 
-  // Measure container
+  // Robust dimension measurement with requestAnimationFrame
   useEffect(() => {
-    const container = containerRef.current;
-    if (!container) return;
-
-    const updateDimensions = () => {
+    let rafId: number;
+    let resizeObserver: ResizeObserver | null = null;
+    
+    const measure = () => {
+      const container = containerRef.current;
+      if (!container) return;
+      
       const rect = container.getBoundingClientRect();
-      if (rect.width > 100) {
-        setDimensions({ width: rect.width, height: 350 });
+      if (rect.width > 50) {
+        setChartWidth(Math.floor(rect.width));
+        setIsReady(true);
       }
     };
 
-    const timeoutId = setTimeout(updateDimensions, 100);
-    const resizeObserver = new ResizeObserver(updateDimensions);
-    resizeObserver.observe(container);
+    // Initial measurement after paint
+    rafId = requestAnimationFrame(() => {
+      requestAnimationFrame(measure);
+    });
+
+    // ResizeObserver for subsequent changes
+    const container = containerRef.current;
+    if (container) {
+      resizeObserver = new ResizeObserver((entries) => {
+        for (const entry of entries) {
+          const width = entry.contentRect.width;
+          if (width > 50) {
+            setChartWidth(Math.floor(width));
+          }
+        }
+      });
+      resizeObserver.observe(container);
+    }
 
     return () => {
-      clearTimeout(timeoutId);
-      resizeObserver.disconnect();
+      cancelAnimationFrame(rafId);
+      resizeObserver?.disconnect();
     };
   }, []);
 
@@ -187,13 +209,22 @@ export function GlastaDiagram({
         </div>
       </div>
       
-      <div className="p-4" style={{ minHeight: 400 }}>
-        <div ref={containerRef} style={{ width: '100%', height: 350 }}>
-          {dimensions.width > 100 && (
+      <div className="p-4">
+        <div 
+          ref={containerRef} 
+          style={{ 
+            width: '100%', 
+            height: CHART_HEIGHT,
+            minWidth: 300,
+            display: 'block',
+            position: 'relative'
+          }}
+        >
+          {isReady && chartWidth > 50 ? (
             <ComposedChart 
               data={chartData} 
-              width={dimensions.width} 
-              height={350}
+              width={chartWidth} 
+              height={CHART_HEIGHT}
               margin={{ top: 20, right: 60, left: 20, bottom: 30 }}
             >
               <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
@@ -281,6 +312,10 @@ export function GlastaDiagram({
                 strokeWidth={0}
               />
             </ComposedChart>
+          ) : (
+            <div className="flex items-center justify-center h-full">
+              <span className="text-muted-foreground text-sm">Loading chart...</span>
+            </div>
           )}
         </div>
 
@@ -322,28 +357,48 @@ interface TemperatureProfileProps {
   className?: string;
 }
 
+const TEMP_CHART_HEIGHT = 200;
+
 export function TemperatureProfile({ result, className }: TemperatureProfileProps) {
   const containerRef = useRef<HTMLDivElement>(null);
-  const [dimensions, setDimensions] = useState({ width: 600, height: 200 });
+  const [chartWidth, setChartWidth] = useState(0);
+  const [isReady, setIsReady] = useState(false);
 
   useEffect(() => {
-    const container = containerRef.current;
-    if (!container) return;
-
-    const updateDimensions = () => {
+    let rafId: number;
+    let resizeObserver: ResizeObserver | null = null;
+    
+    const measure = () => {
+      const container = containerRef.current;
+      if (!container) return;
+      
       const rect = container.getBoundingClientRect();
-      if (rect.width > 100) {
-        setDimensions({ width: rect.width, height: 200 });
+      if (rect.width > 50) {
+        setChartWidth(Math.floor(rect.width));
+        setIsReady(true);
       }
     };
 
-    const timeoutId = setTimeout(updateDimensions, 100);
-    const resizeObserver = new ResizeObserver(updateDimensions);
-    resizeObserver.observe(container);
+    rafId = requestAnimationFrame(() => {
+      requestAnimationFrame(measure);
+    });
+
+    const container = containerRef.current;
+    if (container) {
+      resizeObserver = new ResizeObserver((entries) => {
+        for (const entry of entries) {
+          const width = entry.contentRect.width;
+          if (width > 50) {
+            setChartWidth(Math.floor(width));
+          }
+        }
+      });
+      resizeObserver.observe(container);
+    }
 
     return () => {
-      clearTimeout(timeoutId);
-      resizeObserver.disconnect();
+      cancelAnimationFrame(rafId);
+      resizeObserver?.disconnect();
     };
   }, []);
 
@@ -373,13 +428,22 @@ export function TemperatureProfile({ result, className }: TemperatureProfileProp
         <span className="panel-title">Temperature Profile</span>
       </div>
       
-      <div className="p-4" style={{ minHeight: 230 }}>
-        <div ref={containerRef} style={{ width: '100%', height: 200 }}>
-          {dimensions.width > 100 && (
+      <div className="p-4">
+        <div 
+          ref={containerRef} 
+          style={{ 
+            width: '100%', 
+            height: TEMP_CHART_HEIGHT,
+            minWidth: 300,
+            display: 'block',
+            position: 'relative'
+          }}
+        >
+          {isReady && chartWidth > 50 ? (
             <LineChart 
               data={chartData} 
-              width={dimensions.width} 
-              height={200}
+              width={chartWidth} 
+              height={TEMP_CHART_HEIGHT}
               margin={{ top: 10, right: 30, left: 10, bottom: 10 }}
             >
               <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
@@ -412,6 +476,10 @@ export function TemperatureProfile({ result, className }: TemperatureProfileProp
                 dot={{ fill: 'hsl(var(--chart-4))', r: 4, strokeWidth: 2, stroke: 'hsl(var(--background))' }}
               />
             </LineChart>
+          ) : (
+            <div className="flex items-center justify-center h-full">
+              <span className="text-muted-foreground text-sm">Loading chart...</span>
+            </div>
           )}
         </div>
       </div>
