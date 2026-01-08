@@ -65,7 +65,21 @@ export default function AnalysisWorkspace() {
   const [perimeter, setPerimeter] = useState<number>(40);
   const [area, setArea] = useState<number>(100);
   
+  // Delay chart rendering until animation completes
+  const [chartsReady, setChartsReady] = useState(false);
+  
   const glastaDiagramRef = useRef<HTMLDivElement>(null);
+
+  // Wait for animation to complete before rendering charts
+  useEffect(() => {
+    if (analysisResult) {
+      setChartsReady(false);
+      const timer = setTimeout(() => setChartsReady(true), 400);
+      return () => clearTimeout(timer);
+    } else {
+      setChartsReady(false);
+    }
+  }, [analysisResult]);
 
   // Auto-create first project if none exist
   useEffect(() => {
@@ -1087,7 +1101,7 @@ export default function AnalysisWorkspace() {
 
         {/* Main Canvas Area */}
         <main className="flex-1 overflow-auto p-4 bg-background">
-          <div className="h-full flex flex-col gap-4">
+          <div className="flex flex-col gap-4">
             {/* Canvas Section */}
             <JunctionCanvas 
               construction={construction}
@@ -1101,32 +1115,43 @@ export default function AnalysisWorkspace() {
 
             {/* Analysis Results */}
             {analysisResult && (
-              <motion.div
-                initial={{ opacity: 0, y: 20 }}
-                animate={{ opacity: 1, y: 0 }}
-                className="flex-1 grid grid-cols-1 lg:grid-cols-2 gap-4 min-h-[500px]"
+              <div 
+                className="grid grid-cols-1 lg:grid-cols-2 gap-4"
+                style={{ minHeight: 800 }}
               >
-                <div className="flex flex-col gap-4">
-                  <div ref={glastaDiagramRef} className="flex-1 min-h-[350px]">
-                    <GlastaDiagram 
-                      result={analysisResult} 
-                      climateData={climateData}
-                      selectedMonth={selectedGlaserMonth}
-                      onMonthChange={setSelectedGlaserMonth}
-                      className="h-full"
-                    />
+                {chartsReady ? (
+                  <>
+                    <div className="flex flex-col gap-4">
+                      <div ref={glastaDiagramRef} style={{ minHeight: 400 }}>
+                        <GlastaDiagram 
+                          result={analysisResult} 
+                          climateData={climateData}
+                          selectedMonth={selectedGlaserMonth}
+                          onMonthChange={setSelectedGlaserMonth}
+                        />
+                      </div>
+                      <TemperatureProfile result={analysisResult} />
+                    </div>
+                    
+                    <div className="flex flex-col gap-4">
+                      <div style={{ minHeight: 350 }}>
+                        <MonthlyAccumulationChart monthlyData={analysisResult.monthlyData} />
+                      </div>
+                      <ResultsSummary 
+                        result={analysisResult}
+                        onExportPDF={exportReport}
+                      />
+                    </div>
+                  </>
+                ) : (
+                  <div className="col-span-2 flex items-center justify-center" style={{ minHeight: 400 }}>
+                    <div className="text-center">
+                      <div className="w-8 h-8 border-2 border-primary/30 border-t-primary rounded-full animate-spin mx-auto mb-3" />
+                      <span className="text-muted-foreground text-sm">Preparing results...</span>
+                    </div>
                   </div>
-                  <TemperatureProfile result={analysisResult} />
-                </div>
-                
-                <div className="flex flex-col gap-4">
-                  <MonthlyAccumulationChart monthlyData={analysisResult.monthlyData} className="flex-1 min-h-[350px]" />
-                  <ResultsSummary 
-                    result={analysisResult}
-                    onExportPDF={exportReport}
-                  />
-                </div>
-              </motion.div>
+                )}
+              </div>
             )}
 
             {/* Empty State */}

@@ -8,30 +8,64 @@ interface MonthlyAccumulationChartProps {
   className?: string;
 }
 
+const CHART_HEIGHT = 280;
+
 export function MonthlyAccumulationChart({ monthlyData, className }: MonthlyAccumulationChartProps) {
   const containerRef = useRef<HTMLDivElement>(null);
-  const [dimensions, setDimensions] = useState({ width: 600, height: 280 });
+  const [chartWidth, setChartWidth] = useState(0);
+  const [isReady, setIsReady] = useState(false);
 
   useEffect(() => {
-    const container = containerRef.current;
-    if (!container) return;
-
-    const updateDimensions = () => {
+    let rafId: number;
+    let resizeObserver: ResizeObserver | null = null;
+    
+    const measure = () => {
+      const container = containerRef.current;
+      if (!container) return;
+      
       const rect = container.getBoundingClientRect();
-      if (rect.width > 100) {
-        setDimensions({ width: rect.width, height: 280 });
+      if (rect.width > 50) {
+        setChartWidth(Math.floor(rect.width));
+        setIsReady(true);
       }
     };
 
-    const timeoutId = setTimeout(updateDimensions, 100);
-    const resizeObserver = new ResizeObserver(updateDimensions);
-    resizeObserver.observe(container);
+    rafId = requestAnimationFrame(() => {
+      requestAnimationFrame(measure);
+    });
+
+    const container = containerRef.current;
+    if (container) {
+      resizeObserver = new ResizeObserver((entries) => {
+        for (const entry of entries) {
+          const width = entry.contentRect.width;
+          if (width > 50) {
+            setChartWidth(Math.floor(width));
+          }
+        }
+      });
+      resizeObserver.observe(container);
+    }
 
     return () => {
-      clearTimeout(timeoutId);
-      resizeObserver.disconnect();
+      cancelAnimationFrame(rafId);
+      resizeObserver?.disconnect();
     };
   }, []);
+
+  // Guard against empty data
+  if (!monthlyData || monthlyData.length === 0) {
+    return (
+      <div className={cn("panel", className)}>
+        <div className="panel-header">
+          <span className="panel-title">Annual Moisture Accumulation</span>
+        </div>
+        <div className="p-4 flex items-center justify-center h-64">
+          <span className="text-muted-foreground">No data available</span>
+        </div>
+      </div>
+    );
+  }
 
   const chartData = monthlyData.map(d => ({
     month: d.month.slice(0, 3),
@@ -78,13 +112,22 @@ export function MonthlyAccumulationChart({ monthlyData, className }: MonthlyAccu
         </div>
       </div>
       
-      <div className="p-4" style={{ minHeight: 310 }}>
-        <div ref={containerRef} style={{ width: '100%', height: 280 }}>
-          {dimensions.width > 100 && (
+      <div className="p-4">
+        <div 
+          ref={containerRef} 
+          style={{ 
+            width: '100%', 
+            height: CHART_HEIGHT,
+            minWidth: 300,
+            display: 'block',
+            position: 'relative'
+          }}
+        >
+          {isReady && chartWidth > 50 ? (
             <ComposedChart 
               data={chartData} 
-              width={dimensions.width} 
-              height={280}
+              width={chartWidth} 
+              height={CHART_HEIGHT}
               margin={{ top: 10, right: 30, left: 10, bottom: 10 }}
             >
               <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
@@ -141,6 +184,10 @@ export function MonthlyAccumulationChart({ monthlyData, className }: MonthlyAccu
                 dot={{ fill: 'hsl(var(--chart-5))', r: 4, strokeWidth: 2, stroke: 'hsl(var(--background))' }}
               />
             </ComposedChart>
+          ) : (
+            <div className="flex items-center justify-center h-full">
+              <span className="text-muted-foreground text-sm">Loading chart...</span>
+            </div>
           )}
         </div>
 
