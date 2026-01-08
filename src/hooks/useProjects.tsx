@@ -354,6 +354,84 @@ export function useProjects() {
     }
   };
 
+  const duplicateBuildup = async (buildupId: string): Promise<BuildupData | null> => {
+    if (!user) return null;
+    
+    // Find the buildup to duplicate
+    let sourceBuildupData: BuildupData | null = null;
+    let projectId: string | null = null;
+    
+    for (const project of projects) {
+      const found = project.buildups.find(b => b.id === buildupId);
+      if (found) {
+        sourceBuildupData = found;
+        projectId = project.id;
+        break;
+      }
+    }
+    
+    if (!sourceBuildupData || !projectId) return null;
+    
+    try {
+      // Get next buildup number
+      const project = projects.find(p => p.id === projectId);
+      const nextNumber = project ? Math.max(0, ...project.buildups.map(b => b.buildup_number)) + 1 : 1;
+      
+      const { data: result, error } = await supabase
+        .from('buildups')
+        .insert({
+          project_id: projectId,
+          user_id: user.id,
+          name: `${sourceBuildupData.name} (Copy)`,
+          buildup_number: nextNumber,
+          construction_type: sourceBuildupData.construction_type,
+          floor_type: sourceBuildupData.floor_type,
+          perimeter: sourceBuildupData.perimeter,
+          area: sourceBuildupData.area,
+          layers: serializeLayers(sourceBuildupData.layers),
+          climate_location: sourceBuildupData.climate_location,
+          internal_temp: sourceBuildupData.internal_temp,
+          internal_rh: sourceBuildupData.internal_rh,
+        })
+        .select()
+        .single();
+      
+      if (error) throw error;
+      
+      const newBuildup: BuildupData = {
+        id: result.id,
+        project_id: result.project_id,
+        name: result.name,
+        buildup_number: result.buildup_number,
+        construction_type: result.construction_type as 'wall' | 'floor',
+        floor_type: result.floor_type as FloorType | null,
+        perimeter: result.perimeter ? Number(result.perimeter) : null,
+        area: result.area ? Number(result.area) : null,
+        layers: deserializeLayers(result.layers as any[] || []),
+        climate_location: result.climate_location,
+        internal_temp: Number(result.internal_temp),
+        internal_rh: Number(result.internal_rh),
+        created_at: result.created_at,
+        updated_at: result.updated_at,
+      };
+      
+      setProjects(prev => prev.map(p => 
+        p.id === projectId 
+          ? { ...p, buildups: [...p.buildups, newBuildup] }
+          : p
+      ));
+      
+      if (currentProject?.id === projectId) {
+        setCurrentProject(prev => prev ? { ...prev, buildups: [...prev.buildups, newBuildup] } : null);
+      }
+      
+      return newBuildup;
+    } catch (error) {
+      console.error('Error duplicating buildup:', error);
+      return null;
+    }
+  };
+
   return {
     projects,
     currentProject,
@@ -366,5 +444,6 @@ export function useProjects() {
     createBuildup,
     updateBuildup,
     deleteBuildup,
+    duplicateBuildup,
   };
 }

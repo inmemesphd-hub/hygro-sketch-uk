@@ -200,8 +200,8 @@ export function GlastaDiagram({
       </div>
       
       <div className="p-4" style={{ minHeight: 380 }}>
-        <div style={{ width: '100%', height: 350 }}>
-          <ResponsiveContainer width="100%" height="100%">
+        <div style={{ width: '100%', height: 350, position: 'relative' }}>
+          <ResponsiveContainer width="100%" height={350}>
             <ComposedChart data={chartData} margin={{ top: 20, right: 60, left: 20, bottom: 30 }}>
               <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
               
@@ -357,8 +357,8 @@ export function TemperatureProfile({ result, className }: TemperatureProfileProp
       </div>
       
       <div className="p-4" style={{ minHeight: 230 }}>
-        <div style={{ width: '100%', height: 200 }}>
-          <ResponsiveContainer width="100%" height="100%">
+        <div style={{ width: '100%', height: 200, position: 'relative' }}>
+          <ResponsiveContainer width="100%" height={200}>
             <LineChart data={chartData} margin={{ top: 10, right: 30, left: 10, bottom: 10 }}>
               <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
               <XAxis 
