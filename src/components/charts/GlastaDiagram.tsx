@@ -1,9 +1,8 @@
-import { useMemo, useState } from 'react';
-import { AnalysisResult, ClimateData, Construction } from '@/types/materials';
-import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, Area, ComposedChart, ReferenceLine, ReferenceArea } from 'recharts';
+import { useMemo, useState, useRef, useEffect } from 'react';
+import { AnalysisResult, ClimateData, ConstructionLayer } from '@/types/materials';
+import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ComposedChart, Area, ReferenceLine } from 'recharts';
 import { cn } from '@/lib/utils';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { performCondensationAnalysis } from '@/utils/hygrothermalCalculations';
 
 interface GlastaDiagramProps {
   result: AnalysisResult;
@@ -27,23 +26,44 @@ export function GlastaDiagram({
   selectedMonth,
   onMonthChange
 }: GlastaDiagramProps) {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [dimensions, setDimensions] = useState({ width: 600, height: 350 });
   const [internalSelectedMonth, setInternalSelectedMonth] = useState<string>('worst');
   const currentMonth = selectedMonth ?? internalSelectedMonth;
   const handleMonthChange = onMonthChange ?? setInternalSelectedMonth;
+
+  // Measure container
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+
+    const updateDimensions = () => {
+      const rect = container.getBoundingClientRect();
+      if (rect.width > 100) {
+        setDimensions({ width: rect.width, height: 350 });
+      }
+    };
+
+    const timeoutId = setTimeout(updateDimensions, 100);
+    const resizeObserver = new ResizeObserver(updateDimensions);
+    resizeObserver.observe(container);
+
+    return () => {
+      clearTimeout(timeoutId);
+      resizeObserver.disconnect();
+    };
+  }, []);
 
   // Find the worst month (closest to or at condensation)
   const worstMonth = useMemo(() => {
     let worstIdx = 0;
     let worstRatio = 0;
     
-    result.vapourPressureGradient.forEach((_, idx) => {
-      const monthlyData = result.monthlyData;
-      monthlyData.forEach((data, mIdx) => {
-        if (data.condensationAmount > 0 || data.cumulativeAccumulation > worstRatio) {
-          worstRatio = data.cumulativeAccumulation;
-          worstIdx = mIdx;
-        }
-      });
+    result.monthlyData.forEach((data, mIdx) => {
+      if (data.condensationAmount > 0 || data.cumulativeAccumulation > worstRatio) {
+        worstRatio = data.cumulativeAccumulation;
+        worstIdx = mIdx;
+      }
     });
     
     return months[worstIdx] || 'January';
@@ -54,7 +74,6 @@ export function GlastaDiagram({
   // Build chart data with temperature line
   const chartData = useMemo(() => {
     const data: any[] = [];
-    const totalThickness = result.construction.layers.reduce((sum, l) => sum + l.thickness, 0);
     
     // Get the climate data for the selected month
     const monthIndex = months.indexOf(displayMonth);
@@ -65,44 +84,13 @@ export function GlastaDiagram({
       externalRH: 85
     };
 
-    // Calculate cumulative vapour resistance for x-axis (sd values)
-    let cumulativeSd = 0;
-    const layerBoundaries: { position: number; name: string; sd: number }[] = [];
-    
-    result.construction.layers.forEach((layer, idx) => {
-      const sd = (layer.thickness / 1000) * layer.material.vapourResistivity;
-      layerBoundaries.push({
-        position: cumulativeSd,
-        name: layer.material.name,
-        sd: cumulativeSd
-      });
-      cumulativeSd += sd;
-    });
-
     for (const point of result.vapourPressureGradient) {
-      // Calculate sd value for this position
-      let positionSd = 0;
-      let accumulated = 0;
-      for (const layer of result.construction.layers) {
-        const layerThickness = layer.thickness;
-        if (accumulated + layerThickness >= point.position) {
-          const fraction = (point.position - accumulated) / layerThickness;
-          const layerSd = (layer.thickness / 1000) * layer.material.vapourResistivity;
-          positionSd += layerSd * fraction;
-          break;
-        } else {
-          positionSd += (layer.thickness / 1000) * layer.material.vapourResistivity;
-          accumulated += layerThickness;
-        }
-      }
-
       // Get temperature at this position
       const tempPoint = result.temperatureGradient.find(t => t.position === point.position);
       const temperature = tempPoint?.temperature ?? 0;
 
       data.push({
         position: point.position,
-        sd: Math.round(positionSd * 100) / 100,
         vapourPressure: Math.round(point.pressure),
         saturationPressure: Math.round(point.saturation),
         temperature: Math.round(temperature * 10) / 10,
@@ -199,10 +187,15 @@ export function GlastaDiagram({
         </div>
       </div>
       
-      <div className="p-4" style={{ minHeight: 380 }}>
-        <div style={{ width: '100%', height: 350, position: 'relative' }}>
-          <ResponsiveContainer width="100%" height={350}>
-            <ComposedChart data={chartData} margin={{ top: 20, right: 60, left: 20, bottom: 30 }}>
+      <div className="p-4" style={{ minHeight: 400 }}>
+        <div ref={containerRef} style={{ width: '100%', height: 350 }}>
+          {dimensions.width > 100 && (
+            <ComposedChart 
+              data={chartData} 
+              width={dimensions.width} 
+              height={350}
+              margin={{ top: 20, right: 60, left: 20, bottom: 30 }}
+            >
               <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
               
               {/* Layer boundary reference lines */}
@@ -288,7 +281,7 @@ export function GlastaDiagram({
                 strokeWidth={0}
               />
             </ComposedChart>
-          </ResponsiveContainer>
+          )}
         </div>
 
         {/* Layer labels below chart */}
@@ -330,6 +323,30 @@ interface TemperatureProfileProps {
 }
 
 export function TemperatureProfile({ result, className }: TemperatureProfileProps) {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [dimensions, setDimensions] = useState({ width: 600, height: 200 });
+
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+
+    const updateDimensions = () => {
+      const rect = container.getBoundingClientRect();
+      if (rect.width > 100) {
+        setDimensions({ width: rect.width, height: 200 });
+      }
+    };
+
+    const timeoutId = setTimeout(updateDimensions, 100);
+    const resizeObserver = new ResizeObserver(updateDimensions);
+    resizeObserver.observe(container);
+
+    return () => {
+      clearTimeout(timeoutId);
+      resizeObserver.disconnect();
+    };
+  }, []);
+
   const chartData = result.temperatureGradient.map(point => ({
     position: point.position,
     temperature: Math.round(point.temperature * 10) / 10,
@@ -357,9 +374,14 @@ export function TemperatureProfile({ result, className }: TemperatureProfileProp
       </div>
       
       <div className="p-4" style={{ minHeight: 230 }}>
-        <div style={{ width: '100%', height: 200, position: 'relative' }}>
-          <ResponsiveContainer width="100%" height={200}>
-            <LineChart data={chartData} margin={{ top: 10, right: 30, left: 10, bottom: 10 }}>
+        <div ref={containerRef} style={{ width: '100%', height: 200 }}>
+          {dimensions.width > 100 && (
+            <LineChart 
+              data={chartData} 
+              width={dimensions.width} 
+              height={200}
+              margin={{ top: 10, right: 30, left: 10, bottom: 10 }}
+            >
               <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
               <XAxis 
                 dataKey="position" 
@@ -390,7 +412,7 @@ export function TemperatureProfile({ result, className }: TemperatureProfileProp
                 dot={{ fill: 'hsl(var(--chart-4))', r: 4, strokeWidth: 2, stroke: 'hsl(var(--background))' }}
               />
             </LineChart>
-          </ResponsiveContainer>
+          )}
         </div>
       </div>
     </div>
