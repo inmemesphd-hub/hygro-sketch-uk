@@ -1,4 +1,4 @@
-import { Construction, ConstructionLayer, ClimateData, AnalysisResult, MonthlyAnalysis, CondensationResult } from '@/types/materials';
+import { Construction, ConstructionLayer, ClimateData, AnalysisResult, MonthlyAnalysis, CondensationResult, SurfaceCondensationMonth } from '@/types/materials';
 
 // Constants
 const GAS_CONSTANT = 461.5; // J/(kg·K) for water vapour
@@ -28,6 +28,12 @@ export function calculateVapourPressure(temperature: number, relativeHumidity: n
  */
 export function calculateLayerThermalResistance(layer: ConstructionLayer): number {
   const thickness = layer.thickness / 1000; // Convert mm to m
+  
+  // If material has fixed thermal resistance (like air gaps), use it
+  if (layer.material.thermalResistance !== undefined) {
+    return layer.material.thermalResistance;
+  }
+  
   const baseR = thickness / layer.material.thermalConductivity;
 
   if (!layer.bridging) {
@@ -64,6 +70,17 @@ export function calculateLayerVapourResistance(layer: ConstructionLayer): number
 }
 
 /**
+ * Calculate layer thermal resistance without bridging
+ */
+export function calculateLayerThermalResistanceNoBridging(layer: ConstructionLayer): number {
+  const thickness = layer.thickness / 1000;
+  if (layer.material.thermalResistance !== undefined) {
+    return layer.material.thermalResistance;
+  }
+  return thickness / layer.material.thermalConductivity;
+}
+
+/**
  * Calculate total U-value of construction
  */
 export function calculateUValue(construction: Construction): number {
@@ -74,6 +91,48 @@ export function calculateUValue(construction: Construction): number {
   }
 
   return 1 / totalR;
+}
+
+/**
+ * Calculate U-value without bridging
+ */
+export function calculateUValueWithoutBridging(construction: Construction): number {
+  let totalR = construction.internalSurfaceResistance + construction.externalSurfaceResistance;
+
+  for (const layer of construction.layers) {
+    totalR += calculateLayerThermalResistanceNoBridging(layer);
+  }
+
+  return 1 / totalR;
+}
+
+/**
+ * Calculate surface condensation data per month
+ */
+export function calculateSurfaceCondensationData(
+  construction: Construction,
+  climateData: ClimateData[]
+): SurfaceCondensationMonth[] {
+  const uValue = calculateUValue(construction);
+  return climateData.map(month => {
+    const deltaT = month.internalTemp - month.externalTemp;
+    const tsi = month.internalTemp - (uValue * deltaT * construction.internalSurfaceResistance);
+    const a = 17.27, b = 237.7;
+    const gamma = (a * month.internalTemp) / (b + month.internalTemp) + Math.log(month.internalRH / 100);
+    const dewPoint = (b * gamma) / (a - gamma);
+    const fRsiMin = deltaT !== 0 ? (dewPoint - month.externalTemp) / deltaT : 0.5;
+    const minTsi = month.externalTemp + fRsiMin * deltaT;
+    return {
+      month: month.month,
+      externalTemp: month.externalTemp,
+      externalRH: month.externalRH,
+      internalTemp: month.internalTemp,
+      internalRH: month.internalRH,
+      minTempFactor: Math.round(fRsiMin * 1000) / 1000,
+      minTsi: Math.round(minTsi * 10) / 10,
+      tsi: Math.round(tsi * 10) / 10,
+    };
+  });
 }
 
 /**
@@ -290,9 +349,13 @@ export function performCondensationAnalysis(
   const endsNearZero = monthlyData[monthlyData.length - 1].cumulativeAccumulation < 50;
   const overallResult = maxAccumulation < 500 && endsNearZero ? 'pass' : 'fail';
 
+  const uValueWithoutBridging = calculateUValueWithoutBridging(construction);
+  const surfaceCondensationData = calculateSurfaceCondensationData(construction, climateData);
+
   return {
     construction,
     uValue: Math.round(uValue * 1000) / 1000,
+    uValueWithoutBridging: Math.round(uValueWithoutBridging * 1000) / 1000,
     temperatureGradient: tempGradient,
     vapourPressureGradient: vapourGradient.map(p => ({
       position: p.position,
@@ -306,5 +369,6 @@ export function performCondensationAnalysis(
     failureReason: overallResult === 'fail' 
       ? `Maximum accumulation of ${maxAccumulation.toFixed(0)} g/m² exceeds limit. Annual evaporation insufficient.`
       : undefined,
+    surfaceCondensationData,
   };
 }
