@@ -424,8 +424,8 @@ export default function AnalysisWorkspace() {
         }
       };
       
-      if (isFloor) {
-        // HORIZONTAL cross-section for floors
+      if (!isFloor) {
+        // VERTICAL cross-section for walls
         pdf.setFontSize(8);
         pdf.setTextColor(...colors.muted);
         pdf.text('External (Ground)', margin, y + 5);
@@ -498,7 +498,7 @@ export default function AnalysisWorkspace() {
         
         y += layerHeight + 20;
       } else {
-        // VERTICAL cross-section for walls
+        // HORIZONTAL cross-section for floors
         pdf.setFontSize(8);
         pdf.setTextColor(...colors.primary);
         pdf.text('External', margin, y + 5);
@@ -1092,6 +1092,10 @@ export default function AnalysisWorkspace() {
             <JunctionCanvas 
               construction={construction}
               className="flex-shrink-0"
+              constructionType={constructionType}
+              floorType={floorType}
+              perimeter={perimeter}
+              area={area}
               onConstructionTypeChange={handleConstructionTypeChange}
             />
 

@@ -1,6 +1,6 @@
-import { useMemo } from 'react';
+import { useMemo, useRef, useState, useEffect } from 'react';
 import { MonthlyAnalysis } from '@/types/materials';
-import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, LineChart, Line, ComposedChart, Area, ReferenceLine } from 'recharts';
+import { Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, Line, ComposedChart, ReferenceLine } from 'recharts';
 import { cn } from '@/lib/utils';
 
 interface MonthlyAccumulationChartProps {
@@ -9,6 +9,30 @@ interface MonthlyAccumulationChartProps {
 }
 
 export function MonthlyAccumulationChart({ monthlyData, className }: MonthlyAccumulationChartProps) {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [dimensions, setDimensions] = useState({ width: 600, height: 280 });
+
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+
+    const updateDimensions = () => {
+      const rect = container.getBoundingClientRect();
+      if (rect.width > 100) {
+        setDimensions({ width: rect.width, height: 280 });
+      }
+    };
+
+    const timeoutId = setTimeout(updateDimensions, 100);
+    const resizeObserver = new ResizeObserver(updateDimensions);
+    resizeObserver.observe(container);
+
+    return () => {
+      clearTimeout(timeoutId);
+      resizeObserver.disconnect();
+    };
+  }, []);
+
   const chartData = monthlyData.map(d => ({
     month: d.month.slice(0, 3),
     condensation: d.condensationAmount,
@@ -55,9 +79,14 @@ export function MonthlyAccumulationChart({ monthlyData, className }: MonthlyAccu
       </div>
       
       <div className="p-4" style={{ minHeight: 310 }}>
-        <div style={{ width: '100%', height: 280, position: 'relative' }}>
-          <ResponsiveContainer width="100%" height={280}>
-            <ComposedChart data={chartData} margin={{ top: 10, right: 30, left: 10, bottom: 10 }}>
+        <div ref={containerRef} style={{ width: '100%', height: 280 }}>
+          {dimensions.width > 100 && (
+            <ComposedChart 
+              data={chartData} 
+              width={dimensions.width} 
+              height={280}
+              margin={{ top: 10, right: 30, left: 10, bottom: 10 }}
+            >
               <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
               <XAxis 
                 dataKey="month" 
@@ -112,7 +141,7 @@ export function MonthlyAccumulationChart({ monthlyData, className }: MonthlyAccu
                 dot={{ fill: 'hsl(var(--chart-5))', r: 4, strokeWidth: 2, stroke: 'hsl(var(--background))' }}
               />
             </ComposedChart>
-          </ResponsiveContainer>
+          )}
         </div>
 
         <div className="mt-4 grid grid-cols-4 gap-4 text-center">

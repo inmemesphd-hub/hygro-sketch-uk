@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, useMemo } from 'react';
 import { Canvas as FabricCanvas, Rect, Line, FabricText } from 'fabric';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -14,6 +14,10 @@ import { calculateGroundFloorUValue, calculateUValue } from '@/utils/hygrotherma
 interface JunctionCanvasProps {
   construction: Construction;
   className?: string;
+  constructionType?: 'wall' | 'floor';
+  floorType?: FloorType;
+  perimeter?: number;
+  area?: number;
   onConstructionTypeChange?: (type: 'wall' | 'floor', floorType?: FloorType, perimeter?: number, area?: number) => void;
 }
 
@@ -48,20 +52,48 @@ const getMaterialStyle = (category: string): { color: string; pattern?: string }
   }
 };
 
-export function JunctionCanvas({ construction, className, onConstructionTypeChange }: JunctionCanvasProps) {
+export function JunctionCanvas({ 
+  construction, 
+  className, 
+  constructionType: propConstructionType,
+  floorType: propFloorType,
+  perimeter: propPerimeter,
+  area: propArea,
+  onConstructionTypeChange 
+}: JunctionCanvasProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [fabricCanvas, setFabricCanvas] = useState<FabricCanvas | null>(null);
-  const [viewMode, setViewMode] = useState<ViewMode>('wall');
-  const [floorType, setFloorType] = useState<FloorType>('ground');
-  const [perimeter, setPerimeter] = useState<number>(40);
-  const [area, setArea] = useState<number>(100);
+  const [viewMode, setViewMode] = useState<ViewMode>(propConstructionType || 'wall');
+  const [floorType, setFloorType] = useState<FloorType>(propFloorType || 'ground');
+  const [perimeter, setPerimeter] = useState<number>(propPerimeter || 40);
+  const [area, setArea] = useState<number>(propArea || 100);
   const [zoom, setZoom] = useState(1);
 
-  // Calculate P/A ratio and ground floor U-value
+  // Sync local state with props when buildup changes
+  useEffect(() => {
+    if (propConstructionType !== undefined) setViewMode(propConstructionType);
+  }, [propConstructionType]);
+
+  useEffect(() => {
+    if (propFloorType !== undefined) setFloorType(propFloorType);
+  }, [propFloorType]);
+
+  useEffect(() => {
+    if (propPerimeter !== undefined) setPerimeter(propPerimeter);
+  }, [propPerimeter]);
+
+  useEffect(() => {
+    if (propArea !== undefined) setArea(propArea);
+  }, [propArea]);
+
+  // Calculate P/A ratio and ground floor U-value (recalculate when perimeter/area changes)
   const pARatio = area > 0 ? perimeter / area : 0;
-  const displayUValue = viewMode === 'floor' && floorType === 'ground' 
-    ? calculateGroundFloorUValue(construction, perimeter, area, floorType)
-    : calculateUValue(construction);
+  const displayUValue = useMemo(() => {
+    if (viewMode === 'floor' && (floorType === 'ground' || floorType === 'solid' || floorType === 'suspended')) {
+      return calculateGroundFloorUValue(construction, perimeter, area, floorType);
+    }
+    return calculateUValue(construction);
+  }, [viewMode, floorType, perimeter, area, construction]);
 
   useEffect(() => {
     if (!canvasRef.current) return;
@@ -385,7 +417,7 @@ export function JunctionCanvas({ construction, className, onConstructionTypeChan
   return (
     <div className={cn("panel flex flex-col", className)}>
       <div className="panel-header border-b border-border">
-        <span className="panel-title">2D Junction Model</span>
+        <span className="panel-title">Junction Model</span>
         <div className="flex items-center gap-1">
           <Button
             variant="ghost"
