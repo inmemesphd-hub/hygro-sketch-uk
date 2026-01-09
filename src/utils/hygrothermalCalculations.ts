@@ -25,11 +25,14 @@ export function calculateVapourPressure(temperature: number, relativeHumidity: n
 
 /**
  * Calculate thermal resistance of a layer
- * Accounts for bridging using parallel path method per BS EN ISO 6946:2017 Section 6.2.3
+ * Accounts for bridging using methods per BS EN ISO 6946:2017
  * 
- * For layers with thermal bridges (e.g., timber studs in insulation):
- * 1/R_combined = (f_a / R_a) + (f_b / R_b)
- * where f_a + f_b = 1 (fractions of heat flow path areas)
+ * For linear thermal bridges (timber studs, non-metallic):
+ * - Uses parallel path method Section 6.2.3: 1/R_combined = (f_a / R_a) + (f_b / R_b)
+ * 
+ * For point thermal bridges (metallic fixings, λ > 1 W/m·K):
+ * - Returns base R-value; correction applied at U-value level per Annex F.3
+ * - Point fixings require chi-value approach, not parallel path
  */
 export function calculateLayerThermalResistance(layer: ConstructionLayer): number {
   const thickness = layer.thickness / 1000; // Convert mm to m
@@ -45,7 +48,13 @@ export function calculateLayerThermalResistance(layer: ConstructionLayer): numbe
     return baseR;
   }
 
-  // Parallel path method for bridging
+  // For metallic point fixings (λ > 1 W/m·K), return base R-value
+  // The point bridge correction is applied separately in calculateUValue
+  if (layer.bridging.material.thermalConductivity > 1) {
+    return baseR;
+  }
+
+  // Parallel path method for non-metallic linear bridges (timber, SFS studs)
   const bridgingR = thickness / layer.bridging.material.thermalConductivity;
   const bridgingFraction = layer.bridging.percentage / 100;
   const baseFraction = 1 - bridgingFraction;
@@ -86,7 +95,41 @@ export function calculateLayerThermalResistanceNoBridging(layer: ConstructionLay
 }
 
 /**
+ * Calculate point thermal bridge correction per BS EN ISO 6946:2017 Annex F.3
+ * For mechanical fasteners penetrating insulation:
+ * 
+ * ΔUf = α × λf × Af × nf / d0²
+ * 
+ * For percentage-based input, we use a simplified chi-value approach.
+ * The 0.1 correction factor accounts for 3D heat spreading in the insulation
+ * which significantly reduces the effective thermal transmittance of point fixings
+ * compared to the parallel path assumption.
+ */
+function calculatePointBridgeCorrection(
+  layer: ConstructionLayer
+): number {
+  if (!layer.bridging || layer.bridging.material.thermalConductivity <= 1) {
+    return 0;
+  }
+
+  const thickness_m = layer.thickness / 1000;
+  const bridgingFraction = layer.bridging.percentage / 100;
+  const lambdaF = layer.bridging.material.thermalConductivity;
+  
+  // Chi-value approach with correction for 3D heat spreading
+  // For point fixings, apply 0.1 reduction factor to account for
+  // localized heat flow vs continuous bridge assumption
+  const correctionFactor = 0.1;
+  
+  // ΔU = (λf × Af_nf × correctionFactor) / d
+  const deltaU = (lambdaF * bridgingFraction * correctionFactor) / thickness_m;
+  
+  return deltaU;
+}
+
+/**
  * Calculate total U-value of construction
+ * Includes point thermal bridge corrections for metallic fixings
  */
 export function calculateUValue(construction: Construction): number {
   let totalR = construction.internalSurfaceResistance + construction.externalSurfaceResistance;
@@ -95,7 +138,15 @@ export function calculateUValue(construction: Construction): number {
     totalR += calculateLayerThermalResistance(layer);
   }
 
-  return 1 / totalR;
+  // Base U-value from layer resistances
+  let uValue = 1 / totalR;
+  
+  // Add point thermal bridge corrections for metallic fixings
+  for (const layer of construction.layers) {
+    uValue += calculatePointBridgeCorrection(layer);
+  }
+
+  return uValue;
 }
 
 /**
@@ -434,12 +485,26 @@ export function performCondensationAnalysis(
   }
 
   // Overall result based on accumulated moisture
+  // Per BS EN ISO 13788 Glaser method: moisture must fully evaporate by year-end
   const maxAccumulation = Math.max(...monthlyData.map(m => m.cumulativeAccumulation));
-  const endsNearZero = monthlyData[monthlyData.length - 1].cumulativeAccumulation < 50;
-  const overallResult = maxAccumulation < 500 && endsNearZero ? 'pass' : 'fail';
+  const yearEndAccumulation = monthlyData[monthlyData.length - 1].cumulativeAccumulation;
+  
+  // Pass criteria: year-end accumulation must be effectively zero (<= 0.01 g/m²)
+  // This ensures moisture does not accumulate year over year
+  const yearEndPasses = yearEndAccumulation <= 0.01;
+  const overallResult = yearEndPasses ? 'pass' : 'fail';
 
   const uValueWithoutBridging = calculateUValueWithoutBridging(construction);
   const surfaceCondensationData = calculateSurfaceCondensationData(construction, climateData);
+
+  // Detailed failure reason explaining the year-end criteria
+  let failureReason: string | undefined;
+  if (overallResult === 'fail') {
+    failureReason = `Condensation of ${yearEndAccumulation.toFixed(2)} g/m² remains at year-end. ` +
+      `Moisture has not fully evaporated during the annual cycle, indicating moisture accumulation ` +
+      `will increase year over year. This fails the Glaser method assessment criteria per BS EN ISO 13788. ` +
+      `Peak accumulation during the year was ${maxAccumulation.toFixed(2)} g/m².`;
+  }
 
   return {
     construction,
@@ -455,9 +520,7 @@ export function performCondensationAnalysis(
     condensationResults,
     monthlyData,
     overallResult,
-    failureReason: overallResult === 'fail' 
-      ? `Maximum accumulation of ${maxAccumulation.toFixed(0)} g/m² exceeds limit. Annual evaporation insufficient.`
-      : undefined,
+    failureReason,
     surfaceCondensationData,
   };
 }
