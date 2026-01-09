@@ -1,9 +1,8 @@
+import { useState } from 'react';
 import { ClimateData } from '@/types/materials';
-import { ukRegions, getRegionalClimateData } from '@/data/ukClimate';
-import { DataCard } from '@/components/ui/DataDisplay';
+import { ukCities, getCityClimateData } from '@/data/ukClimate';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Cloud, Home, Thermometer, Droplets } from 'lucide-react';
 
@@ -20,16 +19,22 @@ export function ClimateInput({
   selectedRegion, 
   onRegionChange 
 }: ClimateInputProps) {
+  const [isManuallyEdited, setIsManuallyEdited] = useState(false);
 
   const handleRegionChange = (region: string) => {
     onRegionChange(region);
-    onChange(getRegionalClimateData(region));
+    const newData = getCityClimateData(region);
+    onChange(newData);
+    setIsManuallyEdited(false);
   };
 
-  const updateMonthData = (index: number, field: keyof ClimateData, value: number) => {
+  const updateMonthData = (index: number, field: keyof ClimateData, value: string) => {
+    const numValue = parseFloat(value);
+    if (isNaN(numValue)) return;
     const newData = [...climateData];
-    newData[index] = { ...newData[index], [field]: value };
+    newData[index] = { ...newData[index], [field]: numValue };
     onChange(newData);
+    setIsManuallyEdited(true);
   };
 
   return (
@@ -42,17 +47,23 @@ export function ClimateInput({
         
         <Select value={selectedRegion} onValueChange={handleRegionChange}>
           <SelectTrigger className="w-48 bg-secondary border-border">
-            <SelectValue placeholder="Select region" />
+            <SelectValue placeholder="Select city" />
           </SelectTrigger>
           <SelectContent>
-            {ukRegions.map(region => (
-              <SelectItem key={region.id} value={region.id}>
-                {region.name}
+            {ukCities.map(city => (
+              <SelectItem key={city.id} value={city.id}>
+                {city.name}
               </SelectItem>
             ))}
           </SelectContent>
         </Select>
       </div>
+
+      {isManuallyEdited && (
+        <div className="text-xs text-muted-foreground bg-secondary/50 p-2 rounded">
+          ⚠️ Climate data manually edited. Select a city to reset.
+        </div>
+      )}
 
       <Tabs defaultValue="table" className="w-full">
         <TabsList className="w-full grid grid-cols-2">
@@ -68,26 +79,22 @@ export function ClimateInput({
                   <th className="px-3 py-2 text-left text-xs font-medium text-muted-foreground">Month</th>
                   <th className="px-3 py-2 text-center text-xs font-medium text-muted-foreground">
                     <div className="flex items-center justify-center gap-1">
-                      <Thermometer className="w-3 h-3" />
-                      Ext. °C
+                      <Thermometer className="w-3 h-3" />Ext. °C
                     </div>
                   </th>
                   <th className="px-3 py-2 text-center text-xs font-medium text-muted-foreground">
                     <div className="flex items-center justify-center gap-1">
-                      <Droplets className="w-3 h-3" />
-                      Ext. RH%
+                      <Droplets className="w-3 h-3" />Ext. RH%
                     </div>
                   </th>
                   <th className="px-3 py-2 text-center text-xs font-medium text-muted-foreground">
                     <div className="flex items-center justify-center gap-1">
-                      <Home className="w-3 h-3" />
-                      Int. °C
+                      <Home className="w-3 h-3" />Int. °C
                     </div>
                   </th>
                   <th className="px-3 py-2 text-center text-xs font-medium text-muted-foreground">
                     <div className="flex items-center justify-center gap-1">
-                      <Droplets className="w-3 h-3" />
-                      Int. RH%
+                      <Droplets className="w-3 h-3" />Int. RH%
                     </div>
                   </th>
                 </tr>
@@ -99,39 +106,43 @@ export function ClimateInput({
                     <td className="px-2 py-1">
                       <Input
                         type="number"
-                        value={data.externalTemp}
-                        onChange={(e) => updateMonthData(index, 'externalTemp', parseFloat(e.target.value))}
-                        className="h-7 w-16 text-center font-mono text-xs bg-secondary/50 border-border mx-auto"
                         step="0.1"
+                        defaultValue={data.externalTemp}
+                        key={`ext-temp-${data.month}-${selectedRegion}`}
+                        onBlur={(e) => updateMonthData(index, 'externalTemp', e.target.value)}
+                        className="h-7 w-16 text-center font-mono text-xs bg-secondary/50 border-border mx-auto"
                       />
                     </td>
                     <td className="px-2 py-1">
                       <Input
                         type="number"
-                        value={data.externalRH}
-                        onChange={(e) => updateMonthData(index, 'externalRH', parseFloat(e.target.value))}
-                        className="h-7 w-16 text-center font-mono text-xs bg-secondary/50 border-border mx-auto"
                         min="0"
                         max="100"
+                        defaultValue={data.externalRH}
+                        key={`ext-rh-${data.month}-${selectedRegion}`}
+                        onBlur={(e) => updateMonthData(index, 'externalRH', e.target.value)}
+                        className="h-7 w-16 text-center font-mono text-xs bg-secondary/50 border-border mx-auto"
                       />
                     </td>
                     <td className="px-2 py-1">
                       <Input
                         type="number"
-                        value={data.internalTemp}
-                        onChange={(e) => updateMonthData(index, 'internalTemp', parseFloat(e.target.value))}
-                        className="h-7 w-16 text-center font-mono text-xs bg-secondary/50 border-border mx-auto"
                         step="0.1"
+                        defaultValue={data.internalTemp}
+                        key={`int-temp-${data.month}-${selectedRegion}`}
+                        onBlur={(e) => updateMonthData(index, 'internalTemp', e.target.value)}
+                        className="h-7 w-16 text-center font-mono text-xs bg-secondary/50 border-border mx-auto"
                       />
                     </td>
                     <td className="px-2 py-1">
                       <Input
                         type="number"
-                        value={data.internalRH}
-                        onChange={(e) => updateMonthData(index, 'internalRH', parseFloat(e.target.value))}
-                        className="h-7 w-16 text-center font-mono text-xs bg-secondary/50 border-border mx-auto"
                         min="0"
                         max="100"
+                        defaultValue={data.internalRH}
+                        key={`int-rh-${data.month}-${selectedRegion}`}
+                        onBlur={(e) => updateMonthData(index, 'internalRH', e.target.value)}
+                        className="h-7 w-16 text-center font-mono text-xs bg-secondary/50 border-border mx-auto"
                       />
                     </td>
                   </tr>
@@ -139,6 +150,9 @@ export function ClimateInput({
               </tbody>
             </table>
           </div>
+          <p className="text-xs text-muted-foreground mt-2">
+            Internal conditions per BS EN ISO 13788. Click values to edit.
+          </p>
         </TabsContent>
 
         <TabsContent value="summary" className="mt-4">
@@ -163,7 +177,6 @@ export function ClimateInput({
                 </div>
               </div>
             </div>
-
             <div className="p-4 rounded-lg bg-secondary/50 border border-border">
               <div className="flex items-center gap-2 mb-3">
                 <Home className="w-4 h-4 text-chart-3" />
@@ -179,8 +192,12 @@ export function ClimateInput({
                   <span className="font-mono">{Math.max(...climateData.map(d => d.internalTemp)).toFixed(1)}°C</span>
                 </div>
                 <div className="flex justify-between">
-                  <span className="text-muted-foreground">Avg RH</span>
-                  <span className="font-mono">{(climateData.reduce((s, d) => s + d.internalRH, 0) / 12).toFixed(0)}%</span>
+                  <span className="text-muted-foreground">Min RH</span>
+                  <span className="font-mono">{Math.min(...climateData.map(d => d.internalRH)).toFixed(0)}%</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">Max RH</span>
+                  <span className="font-mono">{Math.max(...climateData.map(d => d.internalRH)).toFixed(0)}%</span>
                 </div>
               </div>
             </div>

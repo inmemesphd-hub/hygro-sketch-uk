@@ -374,16 +374,40 @@ export function ConstructionBuilder({ construction, onChange }: ConstructionBuil
                             <Label className="text-xs">Bridging Percentage</Label>
                             <div className="flex items-center gap-2">
                               <Input
-                                type="number"
-                                min="0.001"
-                                max="100"
-                                step="0.001"
+                                type="text"
+                                inputMode="decimal"
                                 value={layer.bridging.percentage}
                                 onChange={(e) => {
-                                  const val = parseFloat(e.target.value);
+                                  const inputVal = e.target.value;
+                                  // Allow empty, or valid decimal numbers
+                                  if (inputVal === '' || inputVal === '0' || inputVal === '0.') {
+                                    // Temporarily set to a very small value to allow typing
+                                    updateLayer(index, {
+                                      bridging: { ...layer.bridging!, percentage: 0.001 }
+                                    });
+                                    return;
+                                  }
+                                  const val = parseFloat(inputVal);
                                   if (!isNaN(val) && val >= 0.001 && val <= 100) {
                                     updateLayer(index, {
                                       bridging: { ...layer.bridging!, percentage: val }
+                                    });
+                                  } else if (!isNaN(val) && val > 0 && val < 0.001) {
+                                    // Allow values that start with 0.00...
+                                    updateLayer(index, {
+                                      bridging: { ...layer.bridging!, percentage: 0.001 }
+                                    });
+                                  }
+                                }}
+                                onBlur={(e) => {
+                                  const val = parseFloat(e.target.value);
+                                  if (isNaN(val) || val < 0.001) {
+                                    updateLayer(index, {
+                                      bridging: { ...layer.bridging!, percentage: 0.001 }
+                                    });
+                                  } else if (val > 100) {
+                                    updateLayer(index, {
+                                      bridging: { ...layer.bridging!, percentage: 100 }
                                     });
                                   }
                                 }}
