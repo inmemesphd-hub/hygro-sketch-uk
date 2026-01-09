@@ -22,6 +22,7 @@ export type Database = {
           construction_type: string
           created_at: string
           floor_type: string | null
+          humidity_class: number | null
           id: string
           internal_rh: number
           internal_temp: number
@@ -39,6 +40,7 @@ export type Database = {
           construction_type?: string
           created_at?: string
           floor_type?: string | null
+          humidity_class?: number | null
           id?: string
           internal_rh?: number
           internal_temp?: number
@@ -56,6 +58,7 @@ export type Database = {
           construction_type?: string
           created_at?: string
           floor_type?: string | null
+          humidity_class?: number | null
           id?: string
           internal_rh?: number
           internal_temp?: number

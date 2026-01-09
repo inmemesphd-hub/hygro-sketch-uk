@@ -25,7 +25,11 @@ export function calculateVapourPressure(temperature: number, relativeHumidity: n
 
 /**
  * Calculate thermal resistance of a layer
- * Accounts for bridging using parallel path method
+ * Accounts for bridging using parallel path method per BS EN ISO 6946:2017 Section 6.2.3
+ * 
+ * For layers with thermal bridges (e.g., timber studs in insulation):
+ * 1/R_combined = (f_a / R_a) + (f_b / R_b)
+ * where f_a + f_b = 1 (fractions of heat flow path areas)
  */
 export function calculateLayerThermalResistance(layer: ConstructionLayer): number {
   const thickness = layer.thickness / 1000; // Convert mm to m

@@ -2,7 +2,7 @@ import { useState, useMemo, useRef, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Construction, ConstructionLayer, ClimateData, AnalysisResult } from '@/types/materials';
 import { ukMaterialDatabase } from '@/data/ukMaterials';
-import { ukMonthlyClimateData } from '@/data/ukClimate';
+import { ukMonthlyClimateData, getCityClimateData, ukCities, HumidityClass } from '@/data/ukClimate';
 import { performCondensationAnalysis, calculateUValue, calculateUValueWithoutBridging, calculateGroundFloorUValue } from '@/utils/hygrothermalCalculations';
 import { ConstructionBuilder } from '@/components/ConstructionBuilder';
 import { ClimateInput } from '@/components/ClimateInput';
@@ -45,6 +45,7 @@ export default function AnalysisWorkspace() {
   const [construction, setConstruction] = useState<Construction>(defaultConstruction);
   const [climateData, setClimateData] = useState<ClimateData[]>(ukMonthlyClimateData);
   const [selectedRegion, setSelectedRegion] = useState('london');
+  const [humidityClass, setHumidityClass] = useState<HumidityClass>(3);
   const [analysisResult, setAnalysisResult] = useState<AnalysisResult | null>(null);
   const [activeTab, setActiveTab] = useState('construction');
   const [sidebarOpen, setSidebarOpen] = useState(true);
@@ -127,13 +128,12 @@ export default function AnalysisWorkspace() {
         if (buildup.perimeter) setPerimeter(buildup.perimeter);
         if (buildup.area) setArea(buildup.area);
         
-        // Update region and climate data
+        // Update region, humidity class, and climate data
         const regionId = buildup.climate_location.toLowerCase();
         setSelectedRegion(regionId);
-        // Import and use getRegionalClimateData to update climate
-        import('@/data/ukClimate').then(({ getRegionalClimateData }) => {
-          setClimateData(getRegionalClimateData(regionId));
-        });
+        const buildupHumidityClass = buildup.humidity_class || 3;
+        setHumidityClass(buildupHumidityClass);
+        setClimateData(getCityClimateData(regionId, buildupHumidityClass));
         
         // Only clear results if we're switching to a buildup without cached results
         // and NOT currently in the results tab
@@ -409,11 +409,12 @@ export default function AnalysisWorkspace() {
     pdf.text('Internal Conditions:', margin + 5, y + 10);
     pdf.text('External Conditions:', margin + 5, y + 17);
     
+    const selectedCityName = ukCities.find(c => c.id === selectedRegion)?.name || selectedRegion;
     pdf.setTextColor(...colors.text);
     pdf.setFont('helvetica', 'bold');
     pdf.text('ISO 13788 (Glaser Method)', margin + 45, y + 3);
     pdf.text('ISO 13788 Annex C - Normal Occupancy', margin + 45, y + 10);
-    pdf.text('BS5250 Climate Data', margin + 45, y + 17);
+    pdf.text(`BS5250 Climate Data - ${selectedCityName}`, margin + 45, y + 17);
 
     // Now generate pages for each buildup
     for (const buildup of buildupsToExport) {
@@ -482,16 +483,17 @@ export default function AnalysisWorkspace() {
       
       if (!isFloor) {
         // HORIZONTAL cross-section for walls: Internal on LEFT, External on RIGHT
-        pdf.setFontSize(8);
-        pdf.setTextColor(...colors.success);
-        pdf.text('Internal', margin, y + 15);
-        
-        y += 10;
-        
         const totalThickness = buildup.layers.reduce((sum, l) => sum + l.thickness, 0);
         const maxLayerWidth = contentWidth - 35;
         const scale = Math.min(0.15, maxLayerWidth / totalThickness);
         const layerHeight = 30;
+        const labelY = y + 10 + layerHeight / 2 + 3; // Aligned label position
+        
+        pdf.setFontSize(8);
+        pdf.setTextColor(...colors.success);
+        pdf.text('Internal', margin, labelY);
+        
+        y += 10;
         
         let currentX = margin + 18;
         

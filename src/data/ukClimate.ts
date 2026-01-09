@@ -4,56 +4,37 @@ import { ClimateData } from '@/types/materials';
 // External data based on Met Office historical averages
 // Internal conditions calculated per BS EN ISO 13788 Annex A
 
-// ISO 13788 Internal Humidity Calculation
-// Based on humidity class and external vapour pressure
-// For residential buildings (Class 3): Δv = 6 g/m³ in winter, 2 g/m³ in summer
-export const calculateISO13788InternalRH = (
-  externalTemp: number,
-  externalRH: number,
-  internalTemp: number,
-  month: string
-): number => {
-  // Calculate external vapour pressure (Magnus formula)
-  const extSatPressure = 610.5 * Math.exp((17.269 * externalTemp) / (237.3 + externalTemp));
-  const extVapourPressure = (externalRH / 100) * extSatPressure;
-  
-  // Convert to vapour concentration (g/m³)
-  // Using ideal gas law: v = (pv * M) / (R * T) where M = 18.015 g/mol, R = 8.314 J/(mol·K)
-  const extVapourConc = (extVapourPressure * 18.015) / (8.314 * (externalTemp + 273.15));
-  
-  // Humidity class 3 (residential with low occupancy)
-  // Winter months (Oct-Mar): Δv = 6 g/m³
-  // Summer months (Apr-Sep): Δv = 2 g/m³
-  // Transition: Δv varies linearly with external temperature
-  const winterMonths = ['January', 'February', 'March', 'October', 'November', 'December'];
-  const isWinter = winterMonths.includes(month);
-  
-  // Calculate moisture excess based on external temperature
-  // At Text ≤ 0°C: Δv = 6 g/m³
-  // At Text ≥ 20°C: Δv = 2 g/m³
-  // Linear interpolation between
-  let deltaV: number;
-  if (externalTemp <= 0) {
-    deltaV = 6;
-  } else if (externalTemp >= 20) {
-    deltaV = 2;
-  } else {
-    deltaV = 6 - (4 * externalTemp / 20);
-  }
-  
-  // Internal vapour concentration
-  const intVapourConc = extVapourConc + deltaV;
-  
-  // Calculate internal saturation pressure
-  const intSatPressure = 610.5 * Math.exp((17.269 * internalTemp) / (237.3 + internalTemp));
-  
-  // Convert internal vapour concentration back to pressure
-  const intVapourPressure = (intVapourConc * 8.314 * (internalTemp + 273.15)) / 18.015;
-  
-  // Calculate internal RH
-  const internalRH = Math.min(100, Math.max(30, (intVapourPressure / intSatPressure) * 100));
-  
-  return Math.round(internalRH);
+// Humidity Classes 1-5 per BS 5250 / ISO 13788 Table 1
+// Monthly internal RH values for each class
+export type HumidityClass = 1 | 2 | 3 | 4 | 5;
+
+export const humidityClasses: Record<HumidityClass, { name: string; description: string; monthlyRH: number[] }> = {
+  1: { 
+    name: 'Class 1 - Storage', 
+    description: 'Storage areas, warehouses',
+    // Jan, Feb, Mar, Apr, May, Jun, Jul, Aug, Sep, Oct, Nov, Dec
+    monthlyRH: [28, 28, 32, 35, 43, 52, 59, 60, 54, 46, 35, 31] 
+  },
+  2: { 
+    name: 'Class 2 - Offices', 
+    description: 'Offices, shops, low occupancy',
+    monthlyRH: [38, 38, 40, 42, 48, 55, 61, 62, 58, 51, 43, 40] 
+  },
+  3: { 
+    name: 'Class 3 - Dwellings', 
+    description: 'Dwellings with normal occupancy',
+    monthlyRH: [48, 47, 48, 49, 53, 58, 63, 65, 61, 57, 51, 49] 
+  },
+  4: { 
+    name: 'Class 4 - High Occupancy', 
+    description: 'Sports halls, kitchens, canteens',
+    monthlyRH: [57, 56, 56, 56, 58, 61, 65, 67, 65, 62, 59, 58] 
+  },
+  5: { 
+    name: 'Class 5 - Special', 
+    description: 'Swimming pools, laundries, breweries',
+    monthlyRH: [67, 66, 64, 63, 63, 64, 67, 69, 68, 67, 67, 67] 
+  },
 };
 
 // UK Cities with actual weather data
@@ -385,20 +366,22 @@ export const ukCities = ukCityClimateData.map(city => ({
 // For backwards compatibility - keep the old names but map to city data
 export const ukRegions = ukCities;
 
-// Get climate data for a specific city with ISO 13788 internal conditions
-export const getCityClimateData = (cityId: string): ClimateData[] => {
+// Get climate data for a specific city with humidity class-based internal conditions
+export const getCityClimateData = (cityId: string, humidityClass: HumidityClass = 3): ClimateData[] => {
   const city = ukCityClimateData.find(c => c.id === cityId);
   if (!city) {
     // Default to London if city not found
     const londonCity = ukCityClimateData.find(c => c.id === 'london')!;
-    return generateFullClimateData(londonCity);
+    return generateFullClimateData(londonCity, humidityClass);
   }
-  return generateFullClimateData(city);
+  return generateFullClimateData(city, humidityClass);
 };
 
-// Generate full climate data with ISO 13788 compliant internal conditions
-const generateFullClimateData = (city: CityClimateData): ClimateData[] => {
-  return city.monthlyData.map(monthData => {
+// Generate full climate data with humidity class-based internal conditions
+const generateFullClimateData = (city: CityClimateData, humidityClass: HumidityClass): ClimateData[] => {
+  const rhValues = humidityClasses[humidityClass].monthlyRH;
+  
+  return city.monthlyData.map((monthData, index) => {
     // Internal temperature: 20°C in heating season, 22-23°C in summer
     const summerMonths = ['June', 'July', 'August'];
     const transitionMonths = ['May', 'September'];
@@ -412,13 +395,8 @@ const generateFullClimateData = (city: CityClimateData): ClimateData[] => {
       internalTemp = 20;
     }
     
-    // Calculate internal RH per ISO 13788
-    const internalRH = calculateISO13788InternalRH(
-      monthData.externalTemp,
-      monthData.externalRH,
-      internalTemp,
-      monthData.month
-    );
+    // Use humidity class-based RH values from the table
+    const internalRH = rhValues[index];
     
     return {
       month: monthData.month,
@@ -433,8 +411,8 @@ const generateFullClimateData = (city: CityClimateData): ClimateData[] => {
 // Backwards compatibility alias
 export const getRegionalClimateData = getCityClimateData;
 
-// Default UK climate data (London)
-export const ukMonthlyClimateData: ClimateData[] = getCityClimateData('london');
+// Default UK climate data (London with Class 3)
+export const ukMonthlyClimateData: ClimateData[] = getCityClimateData('london', 3);
 
 // Surface resistances as per BS EN ISO 6946
 export const surfaceResistances = {
