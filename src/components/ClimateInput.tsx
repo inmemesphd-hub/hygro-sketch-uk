@@ -48,8 +48,12 @@ export function ClimateInput({
   };
 
   const updateMonthData = (index: number, field: keyof ClimateData, value: string) => {
+    // Allow empty string during editing - only validate and commit on blur
+    if (value === '' || value === '-') return;
+    
     const numValue = parseFloat(value);
     if (isNaN(numValue)) return;
+    
     const newData = [...climateData];
     newData[index] = { ...newData[index], [field]: numValue };
     onChange(newData);
@@ -153,8 +157,9 @@ export function ClimateInput({
                       <Input
                         type="number"
                         step="0.1"
-                        value={data.externalTemp}
-                        onChange={(e) => updateMonthData(index, 'externalTemp', e.target.value)}
+                        defaultValue={data.externalTemp}
+                        onBlur={(e) => updateMonthData(index, 'externalTemp', e.target.value)}
+                        key={`ext-temp-${data.month}-${selectedRegion}-${localHumidityClass}`}
                         className="h-7 w-16 text-center font-mono text-xs bg-secondary/50 border-border mx-auto"
                       />
                     </td>
@@ -163,8 +168,9 @@ export function ClimateInput({
                         type="number"
                         min="0"
                         max="100"
-                        value={data.externalRH}
-                        onChange={(e) => updateMonthData(index, 'externalRH', e.target.value)}
+                        defaultValue={data.externalRH}
+                        onBlur={(e) => updateMonthData(index, 'externalRH', e.target.value)}
+                        key={`ext-rh-${data.month}-${selectedRegion}-${localHumidityClass}`}
                         className="h-7 w-16 text-center font-mono text-xs bg-secondary/50 border-border mx-auto"
                       />
                     </td>
@@ -172,8 +178,9 @@ export function ClimateInput({
                       <Input
                         type="number"
                         step="0.1"
-                        value={data.internalTemp}
-                        onChange={(e) => updateMonthData(index, 'internalTemp', e.target.value)}
+                        defaultValue={data.internalTemp}
+                        onBlur={(e) => updateMonthData(index, 'internalTemp', e.target.value)}
+                        key={`int-temp-${data.month}-${selectedRegion}-${localHumidityClass}`}
                         className="h-7 w-16 text-center font-mono text-xs bg-secondary/50 border-border mx-auto"
                       />
                     </td>
@@ -182,8 +189,9 @@ export function ClimateInput({
                         type="number"
                         min="0"
                         max="100"
-                        value={data.internalRH}
-                        onChange={(e) => updateMonthData(index, 'internalRH', e.target.value)}
+                        defaultValue={data.internalRH}
+                        onBlur={(e) => updateMonthData(index, 'internalRH', e.target.value)}
+                        key={`int-rh-${data.month}-${selectedRegion}-${localHumidityClass}`}
                         className="h-7 w-16 text-center font-mono text-xs bg-secondary/50 border-border mx-auto"
                       />
                     </td>

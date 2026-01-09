@@ -269,10 +269,10 @@ export function GlastaDiagram({
               <Tooltip content={<CustomTooltip />} />
               <Legend wrapperStyle={{ fontSize: '12px', paddingTop: '10px' }} />
               
-              {/* Temperature line (green) */}
+              {/* Temperature line (green) - stepAfter for horizontal-then-vertical */}
               <Line
                 yAxisId="temperature"
-                type="monotone"
+                type="stepAfter"
                 dataKey="temperature"
                 name="Temperature (°C)"
                 stroke="#22c55e"
@@ -280,10 +280,10 @@ export function GlastaDiagram({
                 dot={{ fill: '#22c55e', r: 3 }}
               />
               
-              {/* Saturation pressure line (blue) */}
+              {/* Saturation pressure line (blue) - stepAfter for layer boundaries */}
               <Line
                 yAxisId="pressure"
-                type="monotone"
+                type="stepAfter"
                 dataKey="saturationPressure"
                 name="Saturated VP (Pa)"
                 stroke="#3b82f6"
@@ -291,10 +291,10 @@ export function GlastaDiagram({
                 dot={{ fill: '#3b82f6', r: 3 }}
               />
               
-              {/* Actual vapour pressure line (red) */}
+              {/* Actual vapour pressure line (red) - stepAfter for layer boundaries */}
               <Line
                 yAxisId="pressure"
-                type="monotone"
+                type="stepAfter"
                 dataKey="vapourPressure"
                 name="Partial VP (Pa)"
                 stroke="#ef4444"
@@ -302,10 +302,10 @@ export function GlastaDiagram({
                 dot={{ fill: '#ef4444', r: 3 }}
               />
 
-              {/* Condensation area */}
+              {/* Condensation area - stepAfter to match line style */}
               <Area
                 yAxisId="pressure"
-                type="monotone"
+                type="stepAfter"
                 dataKey="condensation"
                 name="Condensation"
                 fill="hsl(var(--destructive) / 0.3)"
@@ -470,7 +470,7 @@ export function TemperatureProfile({ result, className }: TemperatureProfileProp
               </defs>
               
               <Line
-                type="monotone"
+                type="stepAfter"
                 dataKey="temperature"
                 stroke="url(#tempGradient)"
                 strokeWidth={3}
