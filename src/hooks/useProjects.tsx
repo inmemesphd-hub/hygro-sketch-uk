@@ -4,6 +4,7 @@ import { useAuth } from './useAuth';
 import { Construction, ConstructionLayer, Material } from '@/types/materials';
 import { ukMaterialDatabase } from '@/data/ukMaterials';
 import { FloorType } from '@/components/JunctionCanvas';
+import { HumidityClass } from '@/data/ukClimate';
 
 export interface BuildupData {
   id: string;
@@ -16,6 +17,7 @@ export interface BuildupData {
   area: number | null;
   layers: ConstructionLayer[];
   climate_location: string;
+  humidity_class: HumidityClass;
   internal_temp: number;
   internal_rh: number;
   created_at: string;
@@ -30,23 +32,41 @@ export interface ProjectData {
   buildups: BuildupData[];
 }
 
-// Helper to serialize layers for storage (convert material objects to IDs)
+// Helper to serialize layers for storage (convert material objects to IDs, store custom material data)
 const serializeLayers = (layers: ConstructionLayer[]): any[] => {
-  return layers.map(layer => ({
-    id: layer.id,
-    materialId: layer.material.id,
-    thickness: layer.thickness,
-    bridging: layer.bridging ? {
-      materialId: layer.bridging.material.id,
-      percentage: layer.bridging.percentage,
-    } : null,
-  }));
+  return layers.map(layer => {
+    // Check if this is a custom material (not in the database)
+    const isCustomMaterial = !ukMaterialDatabase.find(m => m.id === layer.material.id);
+    
+    let bridgingData = null;
+    if (layer.bridging) {
+      const isBridgingCustom = !ukMaterialDatabase.find(m => m.id === layer.bridging!.material.id);
+      bridgingData = {
+        materialId: layer.bridging.material.id,
+        customMaterial: isBridgingCustom ? layer.bridging.material : null,
+        percentage: layer.bridging.percentage,
+      };
+    }
+    
+    return {
+      id: layer.id,
+      materialId: layer.material.id,
+      // Store full material data for custom materials
+      customMaterial: isCustomMaterial ? layer.material : null,
+      thickness: layer.thickness,
+      bridging: bridgingData,
+    };
+  });
 };
 
-// Helper to deserialize layers from storage (convert IDs back to material objects)
+// Helper to deserialize layers from storage (convert IDs back to material objects, restore custom materials)
 const deserializeLayers = (layersData: any[]): ConstructionLayer[] => {
   return layersData.map((layerData: any) => {
-    const material = ukMaterialDatabase.find(m => m.id === layerData.materialId);
+    // First try database, then use stored custom material
+    let material = ukMaterialDatabase.find(m => m.id === layerData.materialId);
+    if (!material && layerData.customMaterial) {
+      material = layerData.customMaterial as Material;
+    }
     if (!material) {
       console.warn(`Material not found: ${layerData.materialId}`);
       return null;
@@ -59,7 +79,11 @@ const deserializeLayers = (layersData: any[]): ConstructionLayer[] => {
     };
     
     if (layerData.bridging) {
-      const bridgingMaterial = ukMaterialDatabase.find(m => m.id === layerData.bridging.materialId);
+      // First try database, then use stored custom bridging material
+      let bridgingMaterial = ukMaterialDatabase.find(m => m.id === layerData.bridging.materialId);
+      if (!bridgingMaterial && layerData.bridging.customMaterial) {
+        bridgingMaterial = layerData.bridging.customMaterial as Material;
+      }
       if (bridgingMaterial) {
         layer.bridging = {
           material: bridgingMaterial,
@@ -113,6 +137,7 @@ export function useProjects() {
           area: b.area ? Number(b.area) : null,
           layers: deserializeLayers(b.layers as any[] || []),
           climate_location: b.climate_location,
+          humidity_class: (b.humidity_class as HumidityClass) || 3,
           internal_temp: Number(b.internal_temp),
           internal_rh: Number(b.internal_rh),
           created_at: b.created_at,
@@ -215,6 +240,7 @@ export function useProjects() {
       area?: number;
       layers?: ConstructionLayer[];
       climate_location?: string;
+      humidity_class?: HumidityClass;
       internal_temp?: number;
       internal_rh?: number;
     } = {}
@@ -238,7 +264,8 @@ export function useProjects() {
           perimeter: data.perimeter || null,
           area: data.area || null,
           layers: serializeLayers(data.layers || []),
-          climate_location: data.climate_location || 'London',
+          climate_location: data.climate_location || 'london',
+          humidity_class: data.humidity_class || 3,
           internal_temp: data.internal_temp || 20,
           internal_rh: data.internal_rh || 50,
         })
@@ -258,6 +285,7 @@ export function useProjects() {
         area: result.area ? Number(result.area) : null,
         layers: deserializeLayers(result.layers as any[] || []),
         climate_location: result.climate_location,
+        humidity_class: (result.humidity_class as HumidityClass) || 3,
         internal_temp: Number(result.internal_temp),
         internal_rh: Number(result.internal_rh),
         created_at: result.created_at,
@@ -291,6 +319,7 @@ export function useProjects() {
       area: number | null;
       layers: ConstructionLayer[];
       climate_location: string;
+      humidity_class: HumidityClass;
       internal_temp: number;
       internal_rh: number;
     }>
@@ -390,6 +419,7 @@ export function useProjects() {
           area: sourceBuildupData.area,
           layers: serializeLayers(sourceBuildupData.layers),
           climate_location: sourceBuildupData.climate_location,
+          humidity_class: sourceBuildupData.humidity_class,
           internal_temp: sourceBuildupData.internal_temp,
           internal_rh: sourceBuildupData.internal_rh,
         })
@@ -409,6 +439,7 @@ export function useProjects() {
         area: result.area ? Number(result.area) : null,
         layers: deserializeLayers(result.layers as any[] || []),
         climate_location: result.climate_location,
+        humidity_class: (result.humidity_class as HumidityClass) || 3,
         internal_temp: Number(result.internal_temp),
         internal_rh: Number(result.internal_rh),
         created_at: result.created_at,

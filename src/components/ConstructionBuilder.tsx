@@ -10,14 +10,16 @@ import { Switch } from '@/components/ui/switch';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { 
   Plus, Trash2, GripVertical, Layers, 
-  ChevronDown, ChevronUp, Settings, Edit2, Replace
+  ChevronDown, ChevronUp, Settings, Edit2, Replace, Save
 } from 'lucide-react';
+import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import { calculateUValue, calculateLayerThermalResistance, calculateUValueWithoutBridging } from '@/utils/hygrothermalCalculations';
 
 interface ConstructionBuilderProps {
   construction: Construction;
   onChange: (construction: Construction) => void;
+  onSave?: () => void;
 }
 
 const layerColors = [
@@ -31,7 +33,7 @@ const layerColors = [
   'bg-layer-8',
 ];
 
-export function ConstructionBuilder({ construction, onChange }: ConstructionBuilderProps) {
+export function ConstructionBuilder({ construction, onChange, onSave }: ConstructionBuilderProps) {
   const [materialLibraryOpen, setMaterialLibraryOpen] = useState(false);
   const [expandedLayer, setExpandedLayer] = useState<string | null>(null);
   const [addingToIndex, setAddingToIndex] = useState<number | null>(null);
@@ -143,19 +145,35 @@ export function ConstructionBuilder({ construction, onChange }: ConstructionBuil
           <Layers className="w-4 h-4 text-primary" />
           <span className="panel-title">Construction Layers</span>
         </div>
-        <div className="flex flex-col items-end gap-0.5">
-          <div className="text-right">
-            <span className="data-label">U-Value</span>
-            <div className="font-mono text-lg text-primary">
-              {uValue.toFixed(3)}
-              <span className="text-xs text-muted-foreground ml-1">W/m²K</span>
-            </div>
-          </div>
-          {uValue !== uValueNoBridging && (
-            <div className="text-xs text-muted-foreground">
-              Without bridging: {uValueNoBridging.toFixed(3)}
-            </div>
+        <div className="flex items-center gap-4">
+          {onSave && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => {
+                onSave();
+                toast.success('Build-up saved');
+              }}
+              className="flex items-center gap-2"
+            >
+              <Save className="w-4 h-4" />
+              Save
+            </Button>
           )}
+          <div className="flex flex-col items-end gap-0.5">
+            <div className="text-right">
+              <span className="data-label">U-Value</span>
+              <div className="font-mono text-lg text-primary">
+                {uValue.toFixed(3)}
+                <span className="text-xs text-muted-foreground ml-1">W/m²K</span>
+              </div>
+            </div>
+            {uValue !== uValueNoBridging && (
+              <div className="text-xs text-muted-foreground">
+                Without bridging: {uValueNoBridging.toFixed(3)}
+              </div>
+            )}
+          </div>
         </div>
       </div>
 

@@ -1,6 +1,6 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { ClimateData } from '@/types/materials';
-import { ukCities, getCityClimateData } from '@/data/ukClimate';
+import { ukCities, getCityClimateData, humidityClasses, HumidityClass } from '@/data/ukClimate';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Input } from '@/components/ui/input';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -11,19 +11,38 @@ interface ClimateInputProps {
   onChange: (data: ClimateData[]) => void;
   selectedRegion: string;
   onRegionChange: (region: string) => void;
+  humidityClass?: HumidityClass;
+  onHumidityClassChange?: (humidityClass: HumidityClass) => void;
 }
 
 export function ClimateInput({ 
   climateData, 
   onChange, 
   selectedRegion, 
-  onRegionChange 
+  onRegionChange,
+  humidityClass = 3,
+  onHumidityClassChange 
 }: ClimateInputProps) {
   const [isManuallyEdited, setIsManuallyEdited] = useState(false);
+  const [localHumidityClass, setLocalHumidityClass] = useState<HumidityClass>(humidityClass);
+
+  // Sync local humidity class with prop
+  useEffect(() => {
+    setLocalHumidityClass(humidityClass);
+  }, [humidityClass]);
 
   const handleRegionChange = (region: string) => {
     onRegionChange(region);
-    const newData = getCityClimateData(region);
+    const newData = getCityClimateData(region, localHumidityClass);
+    onChange(newData);
+    setIsManuallyEdited(false);
+  };
+
+  const handleHumidityClassChange = (classValue: string) => {
+    const newClass = parseInt(classValue) as HumidityClass;
+    setLocalHumidityClass(newClass);
+    onHumidityClassChange?.(newClass);
+    const newData = getCityClimateData(selectedRegion, newClass);
     onChange(newData);
     setIsManuallyEdited(false);
   };
@@ -44,24 +63,51 @@ export function ClimateInput({
           <Cloud className="w-4 h-4 text-primary" />
           <span className="panel-title">Climate Data</span>
         </div>
+      </div>
+      
+      {/* City and Humidity Class selectors */}
+      <div className="flex flex-col sm:flex-row gap-3">
+        <div className="flex-1">
+          <label className="text-xs text-muted-foreground mb-1 block">Weather Location</label>
+          <Select value={selectedRegion} onValueChange={handleRegionChange}>
+            <SelectTrigger className="w-full bg-secondary border-border">
+              <SelectValue placeholder="Select city" />
+            </SelectTrigger>
+            <SelectContent>
+              {ukCities.map(city => (
+                <SelectItem key={city.id} value={city.id}>
+                  {city.name}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
         
-        <Select value={selectedRegion} onValueChange={handleRegionChange}>
-          <SelectTrigger className="w-48 bg-secondary border-border">
-            <SelectValue placeholder="Select city" />
-          </SelectTrigger>
-          <SelectContent>
-            {ukCities.map(city => (
-              <SelectItem key={city.id} value={city.id}>
-                {city.name}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
+        <div className="flex-1">
+          <label className="text-xs text-muted-foreground mb-1 block">Humidity Class (BS 5250)</label>
+          <Select value={localHumidityClass.toString()} onValueChange={handleHumidityClassChange}>
+            <SelectTrigger className="w-full bg-secondary border-border">
+              <SelectValue placeholder="Select humidity class" />
+            </SelectTrigger>
+            <SelectContent>
+              {Object.entries(humidityClasses).map(([key, value]) => (
+                <SelectItem key={key} value={key}>
+                  {value.name}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+      </div>
+      
+      {/* Humidity class description */}
+      <div className="text-xs text-muted-foreground bg-secondary/50 p-2 rounded">
+        {humidityClasses[localHumidityClass].description}
       </div>
 
       {isManuallyEdited && (
-        <div className="text-xs text-muted-foreground bg-secondary/50 p-2 rounded">
-          ⚠️ Climate data manually edited. Select a city to reset.
+        <div className="text-xs text-warning bg-warning/10 p-2 rounded border border-warning/20">
+          ⚠️ Climate data manually edited. Select a city or humidity class to reset.
         </div>
       )}
 
@@ -107,9 +153,8 @@ export function ClimateInput({
                       <Input
                         type="number"
                         step="0.1"
-                        defaultValue={data.externalTemp}
-                        key={`ext-temp-${data.month}-${selectedRegion}`}
-                        onBlur={(e) => updateMonthData(index, 'externalTemp', e.target.value)}
+                        value={data.externalTemp}
+                        onChange={(e) => updateMonthData(index, 'externalTemp', e.target.value)}
                         className="h-7 w-16 text-center font-mono text-xs bg-secondary/50 border-border mx-auto"
                       />
                     </td>
@@ -118,9 +163,8 @@ export function ClimateInput({
                         type="number"
                         min="0"
                         max="100"
-                        defaultValue={data.externalRH}
-                        key={`ext-rh-${data.month}-${selectedRegion}`}
-                        onBlur={(e) => updateMonthData(index, 'externalRH', e.target.value)}
+                        value={data.externalRH}
+                        onChange={(e) => updateMonthData(index, 'externalRH', e.target.value)}
                         className="h-7 w-16 text-center font-mono text-xs bg-secondary/50 border-border mx-auto"
                       />
                     </td>
@@ -128,9 +172,8 @@ export function ClimateInput({
                       <Input
                         type="number"
                         step="0.1"
-                        defaultValue={data.internalTemp}
-                        key={`int-temp-${data.month}-${selectedRegion}`}
-                        onBlur={(e) => updateMonthData(index, 'internalTemp', e.target.value)}
+                        value={data.internalTemp}
+                        onChange={(e) => updateMonthData(index, 'internalTemp', e.target.value)}
                         className="h-7 w-16 text-center font-mono text-xs bg-secondary/50 border-border mx-auto"
                       />
                     </td>
@@ -139,9 +182,8 @@ export function ClimateInput({
                         type="number"
                         min="0"
                         max="100"
-                        defaultValue={data.internalRH}
-                        key={`int-rh-${data.month}-${selectedRegion}`}
-                        onBlur={(e) => updateMonthData(index, 'internalRH', e.target.value)}
+                        value={data.internalRH}
+                        onChange={(e) => updateMonthData(index, 'internalRH', e.target.value)}
                         className="h-7 w-16 text-center font-mono text-xs bg-secondary/50 border-border mx-auto"
                       />
                     </td>
@@ -151,7 +193,7 @@ export function ClimateInput({
             </table>
           </div>
           <p className="text-xs text-muted-foreground mt-2">
-            Internal conditions per BS EN ISO 13788. Click values to edit.
+            Internal conditions per BS 5250 / ISO 13788 humidity classes. Click values to edit.
           </p>
         </TabsContent>
 
