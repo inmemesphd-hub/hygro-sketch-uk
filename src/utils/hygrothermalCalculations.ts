@@ -4,6 +4,10 @@ import { Construction, ConstructionLayer, ClimateData, AnalysisResult, MonthlyAn
 const GAS_CONSTANT = 461.5; // J/(kg·K) for water vapour
 const SOIL_THERMAL_CONDUCTIVITY = 1.5; // W/(m·K) for clay soil (BS EN ISO 13370)
 
+// BS EN ISO 13788 constants for vapour diffusion
+const DELTA_0 = 2e-10; // Water vapour permeability of air (kg/(m·s·Pa))
+const SECONDS_PER_MONTH = 30.4 * 24 * 3600; // Average seconds per month
+
 /**
  * Calculate saturation vapour pressure using Magnus formula
  * @param temperature in °C
@@ -40,22 +44,41 @@ export function calculateLayerThermalResistance(layer: ConstructionLayer): numbe
 }
 
 /**
- * Calculate vapour resistance of a layer
+ * Calculate S_d (equivalent air layer thickness) for a layer
+ * per BS EN ISO 13788
+ * S_d = μ × d (metres)
+ * where μ = vapour resistance factor, d = thickness in metres
+ */
+export function calculateSd(layer: ConstructionLayer): number {
+  const thickness_m = layer.thickness / 1000;
+  // Convert vapourResistivity (MN·s/(g·m)) to μ factor
+  // μ ≈ vapourResistivity × 5e9 (approximate conversion)
+  const mu = layer.material.vapourResistivity * 5e9;
+  return mu * thickness_m;
+}
+
+/**
+ * Calculate vapour resistance of a layer using S_d method
+ * per BS EN ISO 13788
  */
 export function calculateLayerVapourResistance(layer: ConstructionLayer): number {
-  const thickness = layer.thickness / 1000; // Convert mm to m
-  const baseGv = layer.material.vapourResistivity * thickness * 1e9; // MN·s/g to s/g
-
+  const Sd = calculateSd(layer);
+  
   if (!layer.bridging) {
-    return baseGv;
+    return Sd / DELTA_0; // Return vapour resistance
   }
-
-  // Weighted average for vapour resistance
-  const bridgingGv = layer.bridging.material.vapourResistivity * thickness * 1e9;
+  
+  // For bridged layers, calculate weighted Sd
+  const thickness_m = layer.thickness / 1000;
+  const muBridge = layer.bridging.material.vapourResistivity * 5e9;
+  const SdBridge = muBridge * thickness_m;
+  
   const bridgingFraction = layer.bridging.percentage / 100;
   const baseFraction = 1 - bridgingFraction;
-
-  return (baseFraction * baseGv) + (bridgingFraction * bridgingGv);
+  
+  // Parallel Sd calculation
+  const effectiveSd = 1 / ((baseFraction / Sd) + (bridgingFraction / SdBridge));
+  return effectiveSd / DELTA_0;
 }
 
 /**
@@ -288,21 +311,40 @@ export function calculateGroundFloorUValue(
 }
 
 /**
- * Calculate surface condensation data per month
+ * Calculate surface condensation data per month using Mould Risk Limit (80% RH)
+ * per BS EN ISO 13788
+ * 
+ * The mould risk limit uses 80% RH instead of dew point (100% RH)
+ * to provide adequate safety margin against mould growth
  */
 export function calculateSurfaceCondensationData(
   construction: Construction,
   climateData: ClimateData[]
 ): SurfaceCondensationMonth[] {
   const uValue = calculateUValue(construction);
+  const a = 17.27, b = 237.7;
+  
   return climateData.map(month => {
     const deltaT = month.internalTemp - month.externalTemp;
     const tsi = month.internalTemp - (uValue * deltaT * construction.internalSurfaceResistance);
-    const a = 17.27, b = 237.7;
-    const gamma = (a * month.internalTemp) / (b + month.internalTemp) + Math.log(month.internalRH / 100);
-    const dewPoint = (b * gamma) / (a - gamma);
-    const fRsiMin = deltaT !== 0 ? (dewPoint - month.externalTemp) / deltaT : 0.5;
-    const minTsi = month.externalTemp + fRsiMin * deltaT;
+    
+    // Calculate internal partial vapour pressure (P_v)
+    const pInternal = calculateVapourPressure(month.internalTemp, month.internalRH);
+    
+    // Mould Risk Limit: 80% RH
+    // Find P_sat where RH would be 80%: P_sat = P_v / 0.8
+    const pSatRequired = pInternal / 0.8;
+    
+    // Find T_si,min using inverse Magnus formula
+    // P_sat = 610.78 * exp((a * T) / (b + T))
+    // Solving for T: T = (b * ln(P_sat/610.78)) / (a - ln(P_sat/610.78))
+    const lnRatio = Math.log(pSatRequired / 610.78);
+    const tSiMin = (b * lnRatio) / (a - lnRatio);
+    
+    // Calculate Temperature Factor using mould risk T_si,min
+    // f_Rsi = (T_si,min - T_ext) / (T_int - T_ext)
+    const fRsiMin = deltaT !== 0 ? (tSiMin - month.externalTemp) / deltaT : 0.5;
+    
     return {
       month: month.month,
       externalTemp: month.externalTemp,
@@ -310,7 +352,7 @@ export function calculateSurfaceCondensationData(
       internalTemp: month.internalTemp,
       internalRH: month.internalRH,
       minTempFactor: Math.round(fRsiMin * 1000) / 1000,
-      minTsi: Math.round(minTsi * 10) / 10,
+      minTsi: Math.round(tSiMin * 10) / 10,
       tsi: Math.round(tsi * 10) / 10,
     };
   });
@@ -424,7 +466,11 @@ export function detectCondensation(
 }
 
 /**
- * Calculate monthly analysis over a year
+ * Calculate monthly analysis over a year using Glaser method mass flow
+ * per BS EN ISO 13788
+ * 
+ * Vapour flux: g = (δ₀ / S_d) × ΔP × time
+ * where δ₀ = 2 × 10⁻¹⁰ kg/(m·s·Pa) is water vapour permeability of air
  */
 export function calculateMonthlyAnalysis(
   construction: Construction,
@@ -432,6 +478,14 @@ export function calculateMonthlyAnalysis(
 ): MonthlyAnalysis[] {
   const monthlyResults: MonthlyAnalysis[] = [];
   let cumulativeAccumulation = 0;
+
+  // Calculate total S_d for the construction
+  let totalSd = 0;
+  for (const layer of construction.layers) {
+    totalSd += calculateSd(layer);
+  }
+  // Ensure minimum S_d to prevent division issues
+  totalSd = Math.max(totalSd, 0.01);
 
   for (const climate of climateData) {
     const gradient = calculateVapourPressureGradient(
@@ -442,16 +496,32 @@ export function calculateMonthlyAnalysis(
       climate.externalRH
     );
 
-    const condensationPoints = detectCondensation(gradient);
+    // Calculate condensation using proper Glaser method mass flow
+    let condensationAmount = 0;
     
-    // Calculate condensation amount (simplified)
-    const condensationAmount = condensationPoints.reduce(
-      (sum, point) => sum + point.amount * 0.1, // Simplified factor
-      0
-    );
+    for (let i = 1; i < gradient.length; i++) {
+      const point = gradient[i];
+      if (point.pressure > point.saturation) {
+        // Condensation occurs - calculate mass flow
+        const excessPressure = point.pressure - point.saturation;
+        
+        // Calculate S_d to this interface
+        let SdToInterface = 0;
+        for (let j = 0; j < Math.min(i, construction.layers.length); j++) {
+          SdToInterface += calculateSd(construction.layers[j]);
+        }
+        SdToInterface = Math.max(SdToInterface, 0.01);
+        
+        // Mass flow rate: g = δ₀ × (P_v - P_sat) / S_d × time
+        // Result in g/m² per month
+        const massFlow = (DELTA_0 * excessPressure / SdToInterface) 
+                         * SECONDS_PER_MONTH * 1000; // kg to g
+        condensationAmount += massFlow;
+      }
+    }
 
-    // Evaporation potential (simplified - based on temperature difference)
-    const evaporationPotential = Math.max(0, (climate.externalTemp - 5) * 2);
+    // Evaporation during warmer months (based on drying potential)
+    const evaporationPotential = Math.max(0, (climate.externalTemp - 5) * 5);
     const evaporationAmount = Math.min(cumulativeAccumulation, evaporationPotential);
 
     const netAccumulation = condensationAmount - evaporationAmount;

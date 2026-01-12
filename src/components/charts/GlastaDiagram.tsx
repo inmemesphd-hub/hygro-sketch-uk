@@ -3,6 +3,7 @@ import { AnalysisResult, ClimateData, ConstructionLayer } from '@/types/material
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ComposedChart, Area, ReferenceLine } from 'recharts';
 import { cn } from '@/lib/utils';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { calculateSd } from '@/utils/hygrothermalCalculations';
 
 interface GlastaDiagramProps {
   result: AnalysisResult;
@@ -11,6 +12,8 @@ interface GlastaDiagramProps {
   showMonthSelector?: boolean;
   selectedMonth?: string;
   onMonthChange?: (month: string) => void;
+  xAxisMode?: 'thickness' | 'sd';
+  onXAxisModeChange?: (mode: 'thickness' | 'sd') => void;
 }
 
 const months = [
@@ -26,14 +29,20 @@ export function GlastaDiagram({
   className, 
   showMonthSelector = true,
   selectedMonth,
-  onMonthChange
+  onMonthChange,
+  xAxisMode: externalXAxisMode,
+  onXAxisModeChange
 }: GlastaDiagramProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [chartWidth, setChartWidth] = useState(0);
   const [isReady, setIsReady] = useState(false);
   const [internalSelectedMonth, setInternalSelectedMonth] = useState<string>('worst');
+  const [internalXAxisMode, setInternalXAxisMode] = useState<'thickness' | 'sd'>('thickness');
+  
   const currentMonth = selectedMonth ?? internalSelectedMonth;
   const handleMonthChange = onMonthChange ?? setInternalSelectedMonth;
+  const xAxisMode = externalXAxisMode ?? internalXAxisMode;
+  const handleXAxisModeChange = onXAxisModeChange ?? setInternalXAxisMode;
 
   // Robust dimension measurement with requestAnimationFrame
   useEffect(() => {
@@ -93,7 +102,7 @@ export function GlastaDiagram({
 
   const displayMonth = currentMonth === 'worst' ? worstMonth : currentMonth;
 
-  // Build chart data with temperature line
+  // Build chart data with temperature line and S_d values
   const chartData = useMemo(() => {
     const data: any[] = [];
     
@@ -106,13 +115,24 @@ export function GlastaDiagram({
       externalRH: 85
     };
 
-    for (const point of result.vapourPressureGradient) {
+    let cumulativeSd = 0;
+    
+    for (let i = 0; i < result.vapourPressureGradient.length; i++) {
+      const point = result.vapourPressureGradient[i];
+      
+      // Calculate S_d for x-axis (cumulative through layers)
+      if (i > 0 && i - 1 < result.construction.layers.length) {
+        const layer = result.construction.layers[i - 1];
+        cumulativeSd += calculateSd(layer);
+      }
+      
       // Get temperature at this position
       const tempPoint = result.temperatureGradient.find(t => t.position === point.position);
       const temperature = tempPoint?.temperature ?? 0;
 
       data.push({
         position: point.position,
+        sd: Math.round(cumulativeSd * 100) / 100, // S_d in metres
         vapourPressure: Math.round(point.pressure),
         saturationPressure: Math.round(point.saturation),
         temperature: Math.round(temperature * 10) / 10,
@@ -193,6 +213,16 @@ export function GlastaDiagram({
               {condensationZones.length} condensation zone{condensationZones.length > 1 ? 's' : ''}
             </span>
           )}
+          {/* X-axis mode toggle */}
+          <Select value={xAxisMode} onValueChange={(v) => handleXAxisModeChange(v as 'thickness' | 'sd')}>
+            <SelectTrigger className="w-28 h-8 text-xs">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="thickness">mm</SelectItem>
+              <SelectItem value="sd">Sd (m)</SelectItem>
+            </SelectContent>
+          </Select>
           {showMonthSelector && (
             <Select value={currentMonth} onValueChange={handleMonthChange}>
               <SelectTrigger className="w-32 h-8 text-xs">
@@ -242,10 +272,16 @@ export function GlastaDiagram({
               ))}
 
               <XAxis 
-                dataKey="position" 
+                dataKey={xAxisMode === 'sd' ? 'sd' : 'position'} 
                 stroke="hsl(var(--muted-foreground))"
                 tick={{ fontSize: 11 }}
-                label={{ value: 'Position (mm)', position: 'bottom', offset: 10, fill: 'hsl(var(--muted-foreground))', fontSize: 11 }}
+                label={{ 
+                  value: xAxisMode === 'sd' ? 'Equivalent Air Layer Thickness Sd (m)' : 'Position (mm)', 
+                  position: 'bottom', 
+                  offset: 10, 
+                  fill: 'hsl(var(--muted-foreground))', 
+                  fontSize: 11 
+                }}
               />
               
               {/* Left Y-axis for Pressure */}
