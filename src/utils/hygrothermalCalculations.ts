@@ -24,15 +24,9 @@ export function calculateVapourPressure(temperature: number, relativeHumidity: n
 }
 
 /**
- * Calculate thermal resistance of a layer
- * Accounts for bridging using methods per BS EN ISO 6946:2017
- * 
- * For linear thermal bridges (timber studs, non-metallic):
- * - Uses parallel path method Section 6.2.3: 1/R_combined = (f_a / R_a) + (f_b / R_b)
- * 
- * For point thermal bridges (metallic fixings, λ > 1 W/m·K):
- * - Returns base R-value; correction applied at U-value level per Annex F.3
- * - Point fixings require chi-value approach, not parallel path
+ * Calculate thermal resistance of a layer (without bridging consideration)
+ * Bridging is handled by the Combined Method in calculateUValue
+ * per BS EN ISO 6946:2017 Section 6.7.2
  */
 export function calculateLayerThermalResistance(layer: ConstructionLayer): number {
   const thickness = layer.thickness / 1000; // Convert mm to m
@@ -42,26 +36,7 @@ export function calculateLayerThermalResistance(layer: ConstructionLayer): numbe
     return layer.material.thermalResistance;
   }
   
-  const baseR = thickness / layer.material.thermalConductivity;
-
-  if (!layer.bridging) {
-    return baseR;
-  }
-
-  // For metallic point fixings (λ > 1 W/m·K), return base R-value
-  // The point bridge correction is applied separately in calculateUValue
-  if (layer.bridging.material.thermalConductivity > 1) {
-    return baseR;
-  }
-
-  // Parallel path method for non-metallic linear bridges (timber, SFS studs)
-  const bridgingR = thickness / layer.bridging.material.thermalConductivity;
-  const bridgingFraction = layer.bridging.percentage / 100;
-  const baseFraction = 1 - bridgingFraction;
-
-  // Combined R-value (parallel heat flow)
-  const combinedU = (baseFraction / baseR) + (bridgingFraction / bridgingR);
-  return 1 / combinedU;
+  return thickness / layer.material.thermalConductivity;
 }
 
 /**
@@ -95,58 +70,136 @@ export function calculateLayerThermalResistanceNoBridging(layer: ConstructionLay
 }
 
 /**
- * Calculate point thermal bridge correction per BS EN ISO 6946:2017 Annex F.3
- * For mechanical fasteners penetrating insulation:
+ * Calculate the Upper Limit of Thermal Resistance (R_upper)
+ * per BS EN ISO 6946:2017 Section 6.7.2
  * 
- * ΔUf = α × λf × Af × nf / d0²
+ * Treats the construction as two parallel heat flow paths:
+ * Path A: Through main materials (unbridged portion)
+ * Path B: Through bridging materials (bridged portion)
  * 
- * For percentage-based input, we use a simplified chi-value approach.
- * The 0.1 correction factor accounts for 3D heat spreading in the insulation
- * which significantly reduces the effective thermal transmittance of point fixings
- * compared to the parallel path assumption.
+ * 1/R_upper = (AreaFraction_A / R_total,A) + (AreaFraction_B / R_total,B)
  */
-function calculatePointBridgeCorrection(
-  layer: ConstructionLayer
-): number {
-  if (!layer.bridging || layer.bridging.material.thermalConductivity <= 1) {
-    return 0;
+function calculateUpperLimitResistance(construction: Construction): number {
+  // Find layers with bridging to determine area fractions
+  const bridgedLayers = construction.layers.filter(l => l.bridging);
+  
+  if (bridgedLayers.length === 0) {
+    // No bridging - just sum all layer resistances
+    let totalR = construction.internalSurfaceResistance + construction.externalSurfaceResistance;
+    for (const layer of construction.layers) {
+      totalR += calculateLayerThermalResistanceNoBridging(layer);
+    }
+    return totalR;
   }
-
-  const thickness_m = layer.thickness / 1000;
-  const bridgingFraction = layer.bridging.percentage / 100;
-  const lambdaF = layer.bridging.material.thermalConductivity;
   
-  // Chi-value approach with correction for 3D heat spreading
-  // For point fixings, apply 0.1 reduction factor to account for
-  // localized heat flow vs continuous bridge assumption
-  const correctionFactor = 0.1;
+  // For simplicity, use the bridging percentage from the first bridged layer
+  // (assumes consistent bridging fraction across all bridged layers)
+  const bridgingFraction = bridgedLayers[0].bridging!.percentage / 100;
+  const mainFraction = 1 - bridgingFraction;
   
-  // ΔU = (λf × Af_nf × correctionFactor) / d
-  const deltaU = (lambdaF * bridgingFraction * correctionFactor) / thickness_m;
+  // Calculate R_total,A (path through main materials only)
+  let R_A = construction.internalSurfaceResistance + construction.externalSurfaceResistance;
+  for (const layer of construction.layers) {
+    const thickness_m = layer.thickness / 1000;
+    if (layer.material.thermalResistance !== undefined) {
+      R_A += layer.material.thermalResistance;
+    } else {
+      R_A += thickness_m / layer.material.thermalConductivity;
+    }
+  }
   
-  return deltaU;
+  // Calculate R_total,B (path through bridging materials where they exist)
+  let R_B = construction.internalSurfaceResistance + construction.externalSurfaceResistance;
+  for (const layer of construction.layers) {
+    const thickness_m = layer.thickness / 1000;
+    if (layer.material.thermalResistance !== undefined) {
+      R_B += layer.material.thermalResistance;
+    } else if (layer.bridging) {
+      // Use bridging material conductivity for bridged path
+      R_B += thickness_m / layer.bridging.material.thermalConductivity;
+    } else {
+      // Non-bridged layers use main material
+      R_B += thickness_m / layer.material.thermalConductivity;
+    }
+  }
+  
+  // Upper limit: 1/R_upper = (f_A / R_A) + (f_B / R_B)
+  const R_upper = 1 / ((mainFraction / R_A) + (bridgingFraction / R_B));
+  
+  return R_upper;
 }
 
 /**
- * Calculate total U-value of construction
- * Includes point thermal bridge corrections for metallic fixings
+ * Calculate the Lower Limit of Thermal Resistance (R_lower)
+ * per BS EN ISO 6946:2017 Section 6.7.2
+ * 
+ * For each bridged layer, calculate equivalent resistance:
+ * 1/R_j = (f_bridge / R_bridge) + (f_main / R_main)
+ * 
+ * Then sum all layer resistances in series: R_lower = Σ R_j
+ */
+function calculateLowerLimitResistance(construction: Construction): number {
+  let R_lower = construction.internalSurfaceResistance + construction.externalSurfaceResistance;
+  
+  for (const layer of construction.layers) {
+    const thickness_m = layer.thickness / 1000;
+    
+    // For air gaps with fixed resistance
+    if (layer.material.thermalResistance !== undefined) {
+      R_lower += layer.material.thermalResistance;
+      continue;
+    }
+    
+    if (layer.bridging) {
+      // Bridged layer: calculate parallel equivalent resistance
+      const R_main = thickness_m / layer.material.thermalConductivity;
+      const R_bridge = thickness_m / layer.bridging.material.thermalConductivity;
+      const f_bridge = layer.bridging.percentage / 100;
+      const f_main = 1 - f_bridge;
+      
+      // 1/R_j = (f_bridge / R_bridge) + (f_main / R_main)
+      const R_j = 1 / ((f_bridge / R_bridge) + (f_main / R_main));
+      R_lower += R_j;
+    } else {
+      // Homogeneous layer: simple R = d / λ
+      R_lower += thickness_m / layer.material.thermalConductivity;
+    }
+  }
+  
+  return R_lower;
+}
+
+/**
+ * Calculate total U-value of construction using BS EN ISO 6946 Combined Method
+ * 
+ * For constructions with thermal bridging:
+ * 1. Calculate Upper Limit (R_upper): Parallel heat flow paths for entire construction
+ * 2. Calculate Lower Limit (R_lower): Series of equivalent layer resistances
+ * 3. Combined: R_T = (R_upper + R_lower) / 2
+ * 4. U = 1 / R_T
  */
 export function calculateUValue(construction: Construction): number {
-  let totalR = construction.internalSurfaceResistance + construction.externalSurfaceResistance;
-
-  for (const layer of construction.layers) {
-    totalR += calculateLayerThermalResistance(layer);
-  }
-
-  // Base U-value from layer resistances
-  let uValue = 1 / totalR;
+  // Check if any layers have bridging
+  const hasBridging = construction.layers.some(l => l.bridging);
   
-  // Add point thermal bridge corrections for metallic fixings
-  for (const layer of construction.layers) {
-    uValue += calculatePointBridgeCorrection(layer);
+  if (!hasBridging) {
+    // No bridging: simple series resistance calculation
+    let totalR = construction.internalSurfaceResistance + construction.externalSurfaceResistance;
+    for (const layer of construction.layers) {
+      totalR += calculateLayerThermalResistanceNoBridging(layer);
+    }
+    return 1 / totalR;
   }
-
-  return uValue;
+  
+  // Combined Method for bridged constructions
+  const R_upper = calculateUpperLimitResistance(construction);
+  const R_lower = calculateLowerLimitResistance(construction);
+  
+  // Final total resistance: arithmetic mean of upper and lower limits
+  const R_T = (R_upper + R_lower) / 2;
+  
+  // U-value
+  return 1 / R_T;
 }
 
 /**
