@@ -47,36 +47,41 @@ export function calculateLayerThermalResistance(layer: ConstructionLayer): numbe
  * Calculate S_d (equivalent air layer thickness) for a layer
  * per BS EN ISO 13788
  * S_d = μ × d (metres)
- * where μ = vapour resistance factor, d = thickness in metres
+ * 
+ * Note: In our material database, vapourResistivity is stored as the μ (mu) value
+ * (water vapour resistance factor), not as MNs/gm. This is the dimensionless
+ * ratio of the material's vapour resistance to that of still air.
  */
 export function calculateSd(layer: ConstructionLayer): number {
   const thickness_m = layer.thickness / 1000;
-  // Convert vapourResistivity (MN·s/(g·m)) to μ factor
-  // μ ≈ vapourResistivity × 5e9 (approximate conversion)
-  const mu = layer.material.vapourResistivity * 5e9;
+  // vapourResistivity in our DB is effectively the μ (mu) value
+  const mu = layer.material.vapourResistivity;
   return mu * thickness_m;
 }
 
 /**
  * Calculate vapour resistance of a layer using S_d method
  * per BS EN ISO 13788
+ * 
+ * Vapour resistance Z = S_d / δ₀
+ * where δ₀ = 2 × 10⁻¹⁰ kg/(m·s·Pa) is the water vapour permeability of air
  */
 export function calculateLayerVapourResistance(layer: ConstructionLayer): number {
   const Sd = calculateSd(layer);
   
   if (!layer.bridging) {
-    return Sd / DELTA_0; // Return vapour resistance
+    return Sd / DELTA_0; // Return vapour resistance in s/kg (or equivalent)
   }
   
   // For bridged layers, calculate weighted Sd
   const thickness_m = layer.thickness / 1000;
-  const muBridge = layer.bridging.material.vapourResistivity * 5e9;
+  const muBridge = layer.bridging.material.vapourResistivity;
   const SdBridge = muBridge * thickness_m;
   
   const bridgingFraction = layer.bridging.percentage / 100;
   const baseFraction = 1 - bridgingFraction;
   
-  // Parallel Sd calculation
+  // Parallel Sd calculation (harmonic mean for parallel paths)
   const effectiveSd = 1 / ((baseFraction / Sd) + (bridgingFraction / SdBridge));
   return effectiveSd / DELTA_0;
 }
@@ -466,11 +471,14 @@ export function detectCondensation(
 }
 
 /**
- * Calculate monthly analysis over a year using Glaser method mass flow
+ * Calculate monthly analysis over a year using Glaser method
  * per BS EN ISO 13788
  * 
- * Vapour flux: g = (δ₀ / S_d) × ΔP × time
+ * Condensation rate: g_c = δ₀ × ΔP / S_d × time
  * where δ₀ = 2 × 10⁻¹⁰ kg/(m·s·Pa) is water vapour permeability of air
+ * 
+ * The method calculates vapour flow into and out of condensation planes,
+ * with the net difference determining condensation or evaporation.
  */
 export function calculateMonthlyAnalysis(
   construction: Construction,
@@ -479,15 +487,19 @@ export function calculateMonthlyAnalysis(
   const monthlyResults: MonthlyAnalysis[] = [];
   let cumulativeAccumulation = 0;
 
-  // Calculate total S_d for the construction
-  let totalSd = 0;
+  // Calculate cumulative S_d at each interface
+  const sdValues: number[] = [0]; // Start at internal surface
+  let runningSD = 0;
   for (const layer of construction.layers) {
-    totalSd += calculateSd(layer);
+    runningSD += calculateSd(layer);
+    sdValues.push(runningSD);
   }
-  // Ensure minimum S_d to prevent division issues
-  totalSd = Math.max(totalSd, 0.01);
+  const totalSd = runningSD;
 
   for (const climate of climateData) {
+    const pInternal = calculateVapourPressure(climate.internalTemp, climate.internalRH);
+    const pExternal = calculateVapourPressure(climate.externalTemp, climate.externalRH);
+    
     const gradient = calculateVapourPressureGradient(
       construction,
       climate.internalTemp,
@@ -496,33 +508,47 @@ export function calculateMonthlyAnalysis(
       climate.externalRH
     );
 
-    // Calculate condensation using proper Glaser method mass flow
+    // Find condensation interfaces (where pv > psat)
     let condensationAmount = 0;
+    let evaporationAmount = 0;
     
     for (let i = 1; i < gradient.length; i++) {
       const point = gradient[i];
-      if (point.pressure > point.saturation) {
-        // Condensation occurs - calculate mass flow
-        const excessPressure = point.pressure - point.saturation;
+      const sdAtInterface = sdValues[i] || 0.01;
+      const sdFromInterface = totalSd - sdAtInterface;
+      
+      if (point.pressure >= point.saturation) {
+        // Condensation occurs at this interface
+        // Vapour flow from inside to condensation plane
+        const gIn = (DELTA_0 / Math.max(sdAtInterface, 0.01)) * (pInternal - point.saturation);
+        // Vapour flow from condensation plane to outside
+        const gOut = (DELTA_0 / Math.max(sdFromInterface, 0.01)) * (point.saturation - pExternal);
         
-        // Calculate S_d to this interface
-        let SdToInterface = 0;
-        for (let j = 0; j < Math.min(i, construction.layers.length); j++) {
-          SdToInterface += calculateSd(construction.layers[j]);
+        // Net condensation rate (kg/m²/s)
+        const gNet = gIn - gOut;
+        
+        // Convert to g/m² per month
+        const monthlyCondensation = gNet * SECONDS_PER_MONTH * 1000;
+        
+        if (monthlyCondensation > 0) {
+          condensationAmount += monthlyCondensation;
+        } else {
+          // Evaporation (drying) - negative gNet means moisture leaving
+          evaporationAmount += Math.min(cumulativeAccumulation, Math.abs(monthlyCondensation));
         }
-        SdToInterface = Math.max(SdToInterface, 0.01);
-        
-        // Mass flow rate: g = δ₀ × (P_v - P_sat) / S_d × time
-        // Result in g/m² per month
-        const massFlow = (DELTA_0 * excessPressure / SdToInterface) 
-                         * SECONDS_PER_MONTH * 1000; // kg to g
-        condensationAmount += massFlow;
       }
     }
-
-    // Evaporation during warmer months (based on drying potential)
-    const evaporationPotential = Math.max(0, (climate.externalTemp - 5) * 5);
-    const evaporationAmount = Math.min(cumulativeAccumulation, evaporationPotential);
+    
+    // If no condensation interfaces but we have accumulated moisture, calculate evaporation potential
+    if (condensationAmount === 0 && cumulativeAccumulation > 0) {
+      // Calculate evaporation based on vapour pressure deficit
+      const avgPsat = (calculateSaturationPressure(climate.internalTemp) + 
+                       calculateSaturationPressure(climate.externalTemp)) / 2;
+      const avgPv = (pInternal + pExternal) / 2;
+      const evapPotential = Math.max(0, avgPsat - avgPv);
+      const evapRate = (DELTA_0 / (totalSd / 2)) * evapPotential * SECONDS_PER_MONTH * 1000;
+      evaporationAmount = Math.min(cumulativeAccumulation, evapRate);
+    }
 
     const netAccumulation = condensationAmount - evaporationAmount;
     cumulativeAccumulation = Math.max(0, cumulativeAccumulation + netAccumulation);
