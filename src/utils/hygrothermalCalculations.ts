@@ -474,11 +474,17 @@ export function detectCondensation(
  * Calculate monthly analysis over a year using Glaser method
  * per BS EN ISO 13788
  * 
- * Condensation rate: g_c = δ₀ × ΔP / S_d × time
+ * The Glaser method calculates vapour diffusion through the construction
+ * and determines condensation/evaporation at interfaces where
+ * the vapour pressure exceeds saturation pressure.
+ * 
+ * Key formula: g = δ₀ × ΔP / S_d (kg/m²s)
  * where δ₀ = 2 × 10⁻¹⁰ kg/(m·s·Pa) is water vapour permeability of air
  * 
- * The method calculates vapour flow into and out of condensation planes,
- * with the net difference determining condensation or evaporation.
+ * For each interface with condensation risk:
+ * - g_in = flow from inside to interface
+ * - g_out = flow from interface to outside  
+ * - Net = g_in - g_out (positive = condensation, negative = evaporation)
  */
 export function calculateMonthlyAnalysis(
   construction: Construction,
@@ -486,6 +492,10 @@ export function calculateMonthlyAnalysis(
 ): MonthlyAnalysis[] {
   const monthlyResults: MonthlyAnalysis[] = [];
   let cumulativeAccumulation = 0;
+  
+  // Track which interface has accumulated moisture
+  // In reality there may be multiple condensation planes, but we simplify to track the primary one
+  let condensationInterfaceIndex = -1;
 
   // Calculate cumulative S_d at each interface
   const sdValues: number[] = [0]; // Start at internal surface
@@ -500,63 +510,95 @@ export function calculateMonthlyAnalysis(
     const pInternal = calculateVapourPressure(climate.internalTemp, climate.internalRH);
     const pExternal = calculateVapourPressure(climate.externalTemp, climate.externalRH);
     
-    const gradient = calculateVapourPressureGradient(
+    // Calculate temperature at each interface for saturation pressure
+    const tempGradient = calculateTemperatureGradient(
       construction,
       climate.internalTemp,
-      climate.internalRH,
-      climate.externalTemp,
-      climate.externalRH
+      climate.externalTemp
     );
 
-    // Find condensation interfaces (where pv > psat)
-    let condensationAmount = 0;
-    let evaporationAmount = 0;
+    // Track total condensation and evaporation for this month
+    let monthlyCondensation = 0;
+    let monthlyEvaporation = 0;
     
-    for (let i = 1; i < gradient.length; i++) {
-      const point = gradient[i];
-      const sdAtInterface = sdValues[i] || 0.01;
-      const sdFromInterface = totalSd - sdAtInterface;
+    // For each interface, calculate the vapour flow balance
+    for (let i = 1; i < sdValues.length; i++) {
+      const sdToInterface = sdValues[i];
+      const sdFromInterface = totalSd - sdToInterface;
+      const tempAtInterface = tempGradient[i]?.temperature ?? climate.externalTemp;
+      const pSatAtInterface = calculateSaturationPressure(tempAtInterface);
       
-      if (point.pressure >= point.saturation) {
-        // Condensation occurs at this interface
-        // Vapour flow from inside to condensation plane
-        const gIn = (DELTA_0 / Math.max(sdAtInterface, 0.01)) * (pInternal - point.saturation);
-        // Vapour flow from condensation plane to outside
-        const gOut = (DELTA_0 / Math.max(sdFromInterface, 0.01)) * (point.saturation - pExternal);
-        
-        // Net condensation rate (kg/m²/s)
-        const gNet = gIn - gOut;
-        
-        // Convert to g/m² per month
-        const monthlyCondensation = gNet * SECONDS_PER_MONTH * 1000;
-        
-        if (monthlyCondensation > 0) {
-          condensationAmount += monthlyCondensation;
+      // Vapour flow from inside towards this interface (g_in)
+      // g = δ₀ × (P_in - P_interface) / S_d_to_interface
+      const gIn = (DELTA_0 / Math.max(sdToInterface, 0.001)) * (pInternal - pSatAtInterface);
+      
+      // Vapour flow from this interface to outside (g_out)  
+      // g = δ₀ × (P_interface - P_out) / S_d_from_interface
+      const gOut = (DELTA_0 / Math.max(sdFromInterface, 0.001)) * (pSatAtInterface - pExternal);
+      
+      // Net flow at this interface (kg/m²/s)
+      // Positive = condensation (more coming in than going out)
+      // Negative = evaporation potential (more going out than coming in)
+      const gNet = gIn - gOut;
+      
+      // Convert to g/m² per month
+      const monthlyFlow = gNet * SECONDS_PER_MONTH * 1000;
+      
+      // Check if this interface is a condensation plane
+      // (vapour pressure would exceed saturation, OR there's already moisture here)
+      const isCondensationInterface = i === condensationInterfaceIndex || gIn > 0 && gIn > gOut;
+      
+      if (isCondensationInterface || (cumulativeAccumulation > 0 && condensationInterfaceIndex === i)) {
+        if (monthlyFlow > 0) {
+          // Condensation occurring
+          monthlyCondensation += monthlyFlow;
+          condensationInterfaceIndex = i;
         } else {
-          // Evaporation (drying) - negative gNet means moisture leaving
-          evaporationAmount += Math.min(cumulativeAccumulation, Math.abs(monthlyCondensation));
+          // Evaporation potential at this interface
+          // Can only evaporate what has accumulated
+          const potentialEvap = Math.abs(monthlyFlow);
+          monthlyEvaporation += potentialEvap;
         }
       }
     }
     
-    // If no condensation interfaces but we have accumulated moisture, calculate evaporation potential
-    if (condensationAmount === 0 && cumulativeAccumulation > 0) {
-      // Calculate evaporation based on vapour pressure deficit
-      const avgPsat = (calculateSaturationPressure(climate.internalTemp) + 
-                       calculateSaturationPressure(climate.externalTemp)) / 2;
-      const avgPv = (pInternal + pExternal) / 2;
-      const evapPotential = Math.max(0, avgPsat - avgPv);
-      const evapRate = (DELTA_0 / (totalSd / 2)) * evapPotential * SECONDS_PER_MONTH * 1000;
-      evaporationAmount = Math.min(cumulativeAccumulation, evapRate);
+    // If there's accumulated moisture but no active condensation interface found,
+    // use the previously tracked interface for evaporation calculation
+    if (cumulativeAccumulation > 0 && monthlyCondensation === 0 && condensationInterfaceIndex > 0) {
+      const sdToInterface = sdValues[condensationInterfaceIndex];
+      const sdFromInterface = totalSd - sdToInterface;
+      const tempAtInterface = tempGradient[condensationInterfaceIndex]?.temperature ?? climate.externalTemp;
+      const pSatAtInterface = calculateSaturationPressure(tempAtInterface);
+      
+      // During drying, moisture at the interface creates a vapour source
+      // Vapour flows both inward and outward from the wet interface
+      // g_evap_in = δ₀ × (P_sat - P_in) / S_d_to_interface (flow to inside)
+      // g_evap_out = δ₀ × (P_sat - P_out) / S_d_from_interface (flow to outside)
+      
+      const gEvapIn = (DELTA_0 / Math.max(sdToInterface, 0.001)) * Math.max(0, pSatAtInterface - pInternal);
+      const gEvapOut = (DELTA_0 / Math.max(sdFromInterface, 0.001)) * Math.max(0, pSatAtInterface - pExternal);
+      
+      // Total evaporation rate
+      const gEvapTotal = gEvapIn + gEvapOut;
+      monthlyEvaporation = gEvapTotal * SECONDS_PER_MONTH * 1000;
     }
-
-    const netAccumulation = condensationAmount - evaporationAmount;
+    
+    // Evaporation cannot exceed accumulated moisture
+    monthlyEvaporation = Math.min(monthlyEvaporation, cumulativeAccumulation + monthlyCondensation);
+    
+    // Calculate net change (can be positive or negative)
+    const netAccumulation = monthlyCondensation - monthlyEvaporation;
     cumulativeAccumulation = Math.max(0, cumulativeAccumulation + netAccumulation);
+    
+    // Reset condensation interface if all moisture has evaporated
+    if (cumulativeAccumulation <= 0.01) {
+      condensationInterfaceIndex = -1;
+    }
 
     monthlyResults.push({
       month: climate.month,
-      condensationAmount: Math.round(condensationAmount * 100) / 100,
-      evaporationAmount: Math.round(evaporationAmount * 100) / 100,
+      condensationAmount: Math.round(monthlyCondensation * 100) / 100,
+      evaporationAmount: Math.round(monthlyEvaporation * 100) / 100,
       netAccumulation: Math.round(netAccumulation * 100) / 100,
       cumulativeAccumulation: Math.round(cumulativeAccumulation * 100) / 100,
     });
