@@ -104,6 +104,7 @@ export function GlastaDiagram({
   const displayMonth = currentMonth === 'worst' ? worstMonth : currentMonth;
 
   // Build chart data with temperature line and S_d values
+  // ISO 13788: P_v line uses tangent construction and never crosses P_sat
   const chartData = useMemo(() => {
     const data: any[] = [];
     
@@ -131,40 +132,41 @@ export function GlastaDiagram({
       const tempPoint = result.temperatureGradient.find(t => t.position === point.position);
       const temperature = tempPoint?.temperature ?? 0;
 
+      // ISO 13788 tangent construction: P_v is already capped at P_sat
+      // The vapourPressure from the gradient already follows the tangent rule
       data.push({
         position: point.position,
         sd: Math.round(cumulativeSd * 100) / 100, // S_d in metres
         vapourPressure: Math.round(point.pressure),
         saturationPressure: Math.round(point.saturation),
         temperature: Math.round(temperature * 10) / 10,
-        condensation: point.pressure > point.saturation ? Math.round(point.pressure - point.saturation) : 0,
+        // Mark condensation interface where P_v touches P_sat
+        isCondensationInterface: (point as any).isCondensationInterface || false,
+        // For visual indicator only - no "condensation zone" shown since P_v never exceeds P_sat
+        condensation: 0,
       });
     }
 
     return data;
   }, [result, displayMonth, climateData]);
 
-  // Find condensation zones
-  const condensationZones = useMemo(() => {
-    const zones: { start: number; end: number }[] = [];
-    let inZone = false;
-    let zoneStart = 0;
+  // Find condensation interfaces (where P_v touches P_sat per tangent construction)
+  // ISO 13788: Condensation only occurs at specific material interfaces
+  const condensationInterfaces = useMemo(() => {
+    const interfaces: { position: number; layerIndex: number }[] = [];
 
-    for (const point of result.vapourPressureGradient) {
-      if (point.pressure > point.saturation && !inZone) {
-        inZone = true;
-        zoneStart = point.position;
-      } else if (point.pressure <= point.saturation && inZone) {
-        inZone = false;
-        zones.push({ start: zoneStart, end: point.position });
+    for (let i = 0; i < result.vapourPressureGradient.length; i++) {
+      const point = result.vapourPressureGradient[i];
+      // Check if this is marked as a condensation interface
+      if ((point as any).isCondensationInterface) {
+        interfaces.push({ 
+          position: point.position,
+          layerIndex: i 
+        });
       }
     }
 
-    if (inZone) {
-      zones.push({ start: zoneStart, end: result.vapourPressureGradient[result.vapourPressureGradient.length - 1]?.position || 0 });
-    }
-
-    return zones;
+    return interfaces;
   }, [result]);
 
   // Layer boundaries for reference lines
@@ -209,9 +211,9 @@ export function GlastaDiagram({
       <div className="panel-header">
         <span className="panel-title">Glaser Diagram - {displayMonth}</span>
         <div className="flex items-center gap-2">
-          {condensationZones.length > 0 && (
+          {condensationInterfaces.length > 0 && (
             <span className="text-xs px-2 py-1 rounded bg-destructive/20 text-destructive">
-              {condensationZones.length} condensation zone{condensationZones.length > 1 ? 's' : ''}
+              {condensationInterfaces.length} condensation interface{condensationInterfaces.length > 1 ? 's' : ''}
             </span>
           )}
           {/* X-axis mode toggle */}
@@ -339,16 +341,8 @@ export function GlastaDiagram({
                 dot={{ fill: '#ef4444', r: 3 }}
               />
 
-              {/* Condensation area - stepAfter to match line style */}
-              <Area
-                yAxisId="pressure"
-                type="stepAfter"
-                dataKey="condensation"
-                name="Condensation"
-                fill="hsl(var(--destructive) / 0.3)"
-                stroke="transparent"
-                strokeWidth={0}
-              />
+              {/* ISO 13788: No condensation area shown - P_v never exceeds P_sat with tangent construction */}
+              {/* Condensation interfaces are marked at specific layer boundaries */}
             </ComposedChart>
           ) : (
             <div className="flex items-center justify-center h-full">
@@ -380,10 +374,12 @@ export function GlastaDiagram({
             <div className="w-4 h-0.5 bg-[#3b82f6]" />
             <span className="text-muted-foreground">Saturated Vapour Pressure (Pa)</span>
           </div>
-          <div className="flex items-center gap-2">
-            <div className="w-3 h-3 rounded bg-destructive/30" />
-            <span className="text-muted-foreground">Condensation zone</span>
-          </div>
+          {condensationInterfaces.length > 0 && (
+            <div className="flex items-center gap-2">
+              <div className="w-3 h-3 rounded-full bg-destructive border-2 border-black" />
+              <span className="text-muted-foreground">Condensation interface</span>
+            </div>
+          )}
         </div>
       </div>
     </div>
