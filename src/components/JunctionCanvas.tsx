@@ -9,7 +9,7 @@ import {
 import { cn } from '@/lib/utils';
 import { Construction } from '@/types/materials';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { calculateGroundFloorUValue, calculateUValue } from '@/utils/hygrothermalCalculations';
+import { calculateGroundFloorUValue, calculateUValue, SOIL_TYPES, SoilType } from '@/utils/hygrothermalCalculations';
 
 interface JunctionCanvasProps {
   construction: Construction;
@@ -18,7 +18,18 @@ interface JunctionCanvasProps {
   floorType?: FloorType;
   perimeter?: number;
   area?: number;
-  onConstructionTypeChange?: (type: 'wall' | 'floor', floorType?: FloorType, perimeter?: number, area?: number) => void;
+  wallThickness?: number;
+  soilType?: SoilType;
+  soilConductivity?: number;
+  onConstructionTypeChange?: (
+    type: 'wall' | 'floor', 
+    floorType?: FloorType, 
+    perimeter?: number, 
+    area?: number,
+    wallThickness?: number,
+    soilType?: SoilType,
+    soilConductivity?: number
+  ) => void;
 }
 
 type ViewMode = 'wall' | 'floor';
@@ -59,6 +70,9 @@ export function JunctionCanvas({
   floorType: propFloorType,
   perimeter: propPerimeter,
   area: propArea,
+  wallThickness: propWallThickness,
+  soilType: propSoilType,
+  soilConductivity: propSoilConductivity,
   onConstructionTypeChange 
 }: JunctionCanvasProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -67,7 +81,20 @@ export function JunctionCanvas({
   const [floorType, setFloorType] = useState<FloorType>(propFloorType || 'ground');
   const [perimeter, setPerimeter] = useState<number>(propPerimeter || 40);
   const [area, setArea] = useState<number>(propArea || 100);
+  const [wallThickness, setWallThickness] = useState<number>(propWallThickness || 0.3);
+  const [soilType, setSoilType] = useState<SoilType>(propSoilType || 'sand_gravel');
+  const [soilConductivity, setSoilConductivity] = useState<number>(propSoilConductivity || 2.0);
   const [zoom, setZoom] = useState(1);
+  
+  // Local edit states for inputs to allow full deletion and typing
+  const [perimeterEdit, setPerimeterEdit] = useState<string>('');
+  const [areaEdit, setAreaEdit] = useState<string>('');
+  const [wallThicknessEdit, setWallThicknessEdit] = useState<string>('');
+  const [soilLambdaEdit, setSoilLambdaEdit] = useState<string>('');
+  const [isEditingPerimeter, setIsEditingPerimeter] = useState(false);
+  const [isEditingArea, setIsEditingArea] = useState(false);
+  const [isEditingWallThickness, setIsEditingWallThickness] = useState(false);
+  const [isEditingSoilLambda, setIsEditingSoilLambda] = useState(false);
 
   // Sync local state with props when buildup changes
   useEffect(() => {
@@ -86,14 +113,26 @@ export function JunctionCanvas({
     if (propArea !== undefined) setArea(propArea);
   }, [propArea]);
 
+  useEffect(() => {
+    if (propWallThickness !== undefined) setWallThickness(propWallThickness);
+  }, [propWallThickness]);
+
+  useEffect(() => {
+    if (propSoilType !== undefined) setSoilType(propSoilType);
+  }, [propSoilType]);
+
+  useEffect(() => {
+    if (propSoilConductivity !== undefined) setSoilConductivity(propSoilConductivity);
+  }, [propSoilConductivity]);
+
   // Calculate P/A ratio and ground floor U-value (recalculate when perimeter/area changes)
   const pARatio = area > 0 ? perimeter / area : 0;
   const displayUValue = useMemo(() => {
     if (viewMode === 'floor' && (floorType === 'ground' || floorType === 'solid' || floorType === 'suspended')) {
-      return calculateGroundFloorUValue(construction, perimeter, area, floorType);
+      return calculateGroundFloorUValue(construction, perimeter, area, floorType, wallThickness, soilConductivity);
     }
     return calculateUValue(construction);
-  }, [viewMode, floorType, perimeter, area, construction]);
+  }, [viewMode, floorType, perimeter, area, wallThickness, soilConductivity, construction]);
 
   useEffect(() => {
     if (!canvasRef.current) return;
@@ -129,12 +168,18 @@ export function JunctionCanvas({
     drawConstructionLayers(fabricCanvas, construction, viewMode);
   }, [fabricCanvas, construction, viewMode]);
 
-  // Notify parent when P/A values change
-  useEffect(() => {
+  // Notify parent when floor params change
+  const notifyParent = (ft: FloorType, p: number, a: number, w: number, st: SoilType, sc: number) => {
     if (viewMode === 'floor' && onConstructionTypeChange) {
-      onConstructionTypeChange('floor', floorType, perimeter, area);
+      onConstructionTypeChange('floor', ft, p, a, w, st, sc);
     }
-  }, [perimeter, area, floorType]);
+  };
+
+  useEffect(() => {
+    if (viewMode === 'floor') {
+      notifyParent(floorType, perimeter, area, wallThickness, soilType, soilConductivity);
+    }
+  }, [perimeter, area, floorType, wallThickness, soilType, soilConductivity]);
 
   const drawGrid = (canvas: FabricCanvas) => {
     const gridSize = 20;
@@ -389,7 +434,7 @@ export function JunctionCanvas({
   const handleViewModeChange = (mode: ViewMode) => {
     setViewMode(mode);
     if (mode === 'floor' && onConstructionTypeChange) {
-      onConstructionTypeChange('floor', floorType, perimeter, area);
+      onConstructionTypeChange('floor', floorType, perimeter, area, wallThickness, soilType, soilConductivity);
     } else if (onConstructionTypeChange) {
       onConstructionTypeChange('wall');
     }
@@ -397,22 +442,67 @@ export function JunctionCanvas({
 
   const handleFloorTypeChange = (type: FloorType) => {
     setFloorType(type);
-    if (onConstructionTypeChange) {
-      onConstructionTypeChange('floor', type, perimeter, area);
+    notifyParent(type, perimeter, area, wallThickness, soilType, soilConductivity);
+  };
+
+  const handleSoilTypeChange = (type: SoilType) => {
+    setSoilType(type);
+    const newLambda = SOIL_TYPES[type].lambda;
+    setSoilConductivity(newLambda);
+    notifyParent(floorType, perimeter, area, wallThickness, type, newLambda);
+  };
+
+  // Input handlers with proper deletion support
+  const handlePerimeterFocus = () => {
+    setIsEditingPerimeter(true);
+    setPerimeterEdit(perimeter.toString());
+  };
+
+  const handlePerimeterBlur = () => {
+    setIsEditingPerimeter(false);
+    const val = parseFloat(perimeterEdit);
+    if (!isNaN(val) && val > 0) {
+      setPerimeter(val);
     }
   };
 
-  const handlePerimeterChange = (value: number) => {
-    setPerimeter(value);
-    if (onConstructionTypeChange) {
-      onConstructionTypeChange('floor', floorType, value, area);
+  const handleAreaFocus = () => {
+    setIsEditingArea(true);
+    setAreaEdit(area.toString());
+  };
+
+  const handleAreaBlur = () => {
+    setIsEditingArea(false);
+    const val = parseFloat(areaEdit);
+    if (!isNaN(val) && val > 0) {
+      setArea(val);
     }
   };
 
-  const handleAreaChange = (value: number) => {
-    setArea(value);
-    if (onConstructionTypeChange) {
-      onConstructionTypeChange('floor', floorType, perimeter, value);
+  const handleWallThicknessFocus = () => {
+    setIsEditingWallThickness(true);
+    setWallThicknessEdit(wallThickness.toString());
+  };
+
+  const handleWallThicknessBlur = () => {
+    setIsEditingWallThickness(false);
+    const val = parseFloat(wallThicknessEdit);
+    if (!isNaN(val) && val >= 0.001 && val <= 1) {
+      setWallThickness(val);
+    }
+  };
+
+  const handleSoilLambdaFocus = () => {
+    setIsEditingSoilLambda(true);
+    setSoilLambdaEdit(soilConductivity.toString());
+  };
+
+  const handleSoilLambdaBlur = () => {
+    setIsEditingSoilLambda(false);
+    const val = parseFloat(soilLambdaEdit);
+    if (!isNaN(val) && val >= 0.1 && val <= 10) {
+      setSoilConductivity(val);
+      notifyParent(floorType, perimeter, area, wallThickness, 'custom', val);
     }
   };
 
@@ -489,9 +579,12 @@ export function JunctionCanvas({
                 <div className="flex items-center gap-1 ml-2">
                   <Label className="text-xs text-muted-foreground">P:</Label>
                   <Input
-                    type="number"
-                    value={perimeter}
-                    onChange={(e) => handlePerimeterChange(parseFloat(e.target.value) || 0)}
+                    type="text"
+                    inputMode="decimal"
+                    value={isEditingPerimeter ? perimeterEdit : perimeter}
+                    onFocus={handlePerimeterFocus}
+                    onChange={(e) => setPerimeterEdit(e.target.value)}
+                    onBlur={handlePerimeterBlur}
                     className="w-16 h-8 text-xs"
                     placeholder="m"
                   />
@@ -500,14 +593,60 @@ export function JunctionCanvas({
                 <div className="flex items-center gap-1">
                   <Label className="text-xs text-muted-foreground">A:</Label>
                   <Input
-                    type="number"
-                    value={area}
-                    onChange={(e) => handleAreaChange(parseFloat(e.target.value) || 0)}
+                    type="text"
+                    inputMode="decimal"
+                    value={isEditingArea ? areaEdit : area}
+                    onFocus={handleAreaFocus}
+                    onChange={(e) => setAreaEdit(e.target.value)}
+                    onBlur={handleAreaBlur}
                     className="w-16 h-8 text-xs"
                     placeholder="m²"
                   />
                   <span className="text-xs text-muted-foreground">m²</span>
                 </div>
+                <div className="flex items-center gap-1">
+                  <Label className="text-xs text-muted-foreground">w:</Label>
+                  <Input
+                    type="text"
+                    inputMode="decimal"
+                    value={isEditingWallThickness ? wallThicknessEdit : wallThickness}
+                    onFocus={handleWallThicknessFocus}
+                    onChange={(e) => setWallThicknessEdit(e.target.value)}
+                    onBlur={handleWallThicknessBlur}
+                    className="w-16 h-8 text-xs"
+                    placeholder="m"
+                  />
+                  <span className="text-xs text-muted-foreground">m</span>
+                </div>
+                <div className="flex items-center gap-1">
+                  <Label className="text-xs text-muted-foreground">Ground:</Label>
+                  <Select value={soilType} onValueChange={(v) => handleSoilTypeChange(v as SoilType)}>
+                    <SelectTrigger className="w-28 h-8 text-xs">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {Object.entries(SOIL_TYPES).map(([key, val]) => (
+                        <SelectItem key={key} value={key}>{val.name}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                {soilType === 'custom' && (
+                  <div className="flex items-center gap-1">
+                    <Label className="text-xs text-muted-foreground">λ:</Label>
+                    <Input
+                      type="text"
+                      inputMode="decimal"
+                      value={isEditingSoilLambda ? soilLambdaEdit : soilConductivity}
+                      onFocus={handleSoilLambdaFocus}
+                      onChange={(e) => setSoilLambdaEdit(e.target.value)}
+                      onBlur={handleSoilLambdaBlur}
+                      className="w-14 h-8 text-xs"
+                      placeholder="W/mK"
+                    />
+                    <span className="text-xs text-muted-foreground">W/mK</span>
+                  </div>
+                )}
               </>
             )}
           </>

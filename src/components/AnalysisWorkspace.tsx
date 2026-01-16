@@ -65,6 +65,8 @@ export default function AnalysisWorkspace() {
   const [floorType, setFloorType] = useState<FloorType>('ground');
   const [perimeter, setPerimeter] = useState<number>(40);
   const [area, setArea] = useState<number>(100);
+  const [wallThickness, setWallThickness] = useState<number>(0.3);
+  const [soilConductivity, setSoilConductivity] = useState<number>(2.0);
   
   // Delay chart rendering until animation completes
   const [chartsReady, setChartsReady] = useState(false);
@@ -166,14 +168,23 @@ export default function AnalysisWorkspace() {
     }
   };
 
-  const handleConstructionTypeChange = (type: 'wall' | 'floor', ft?: FloorType, p?: number, a?: number) => {
+  const handleConstructionTypeChange = (
+    type: 'wall' | 'floor', 
+    ft?: FloorType, 
+    p?: number, 
+    a?: number,
+    w?: number,
+    st?: string,
+    sc?: number
+  ) => {
     setConstructionType(type);
     if (type === 'floor') {
       if (ft) setFloorType(ft);
       if (p !== undefined) setPerimeter(p);
       if (a !== undefined) setArea(a);
+      if (w !== undefined) setWallThickness(w);
+      if (sc !== undefined) setSoilConductivity(sc);
       // Set floor-specific surface resistances per BS EN ISO 6946/13370
-      // Rsi = 0.17 for downward heat flow, Rse = 0.00 for ground contact
       setConstruction(prev => ({ 
         ...prev, 
         type: 'floor',
@@ -182,7 +193,6 @@ export default function AnalysisWorkspace() {
       }));
     } else {
       // Wall surface resistances per BS EN ISO 6946
-      // Rsi = 0.13, Rse = 0.04 for horizontal heat flow
       setConstruction(prev => ({ 
         ...prev, 
         type: 'wall',
