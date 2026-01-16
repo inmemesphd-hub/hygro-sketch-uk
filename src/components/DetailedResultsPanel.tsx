@@ -4,6 +4,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { CheckCircle, XCircle, AlertTriangle, Thermometer, Droplets, Layers, FileText } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { reorderToOctSep } from '@/data/ukClimate';
 
 interface DetailedResultsPanelProps {
   result: AnalysisResult;
@@ -13,6 +14,9 @@ interface DetailedResultsPanelProps {
 }
 
 export function DetailedResultsPanel({ result, climateData, layers, className }: DetailedResultsPanelProps) {
+  // Ensure climate data is in Oct-Sep order for display
+  const orderedClimateData = reorderToOctSep(climateData);
+  
   const maxAccumulation = Math.max(...result.monthlyData.map(d => d.cumulativeAccumulation));
   const endYearAccumulation = result.monthlyData[11]?.cumulativeAccumulation || 0;
   const totalCondensation = result.monthlyData.reduce((s, d) => s + d.condensationAmount, 0);
@@ -212,8 +216,8 @@ export function DetailedResultsPanel({ result, climateData, layers, className }:
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {climateData.map((month, idx) => {
-                    const sd = (result.surfaceCondensationData || [])[idx];
+                  {orderedClimateData.map((month, idx) => {
+                    const sd = result.surfaceCondensationData?.find(s => s.month === month.month);
                     const passes = sd ? sd.tsi >= sd.minTsi : true;
                     return (
                       <TableRow key={idx}>

@@ -237,6 +237,11 @@ export function ConstructionBuilder({
                 onFocus={handleRsiFocus}
                 onChange={(e) => setRsiEdit(e.target.value)}
                 onBlur={handleRsiBlur}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    e.currentTarget.blur();
+                  }
+                }}
                 className="w-20 h-6 text-xs"
                 autoFocus
               />
@@ -535,6 +540,11 @@ export function ConstructionBuilder({
                 onFocus={handleRseFocus}
                 onChange={(e) => setRseEdit(e.target.value)}
                 onBlur={handleRseBlur}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    e.currentTarget.blur();
+                  }
+                }}
                 className="w-20 h-6 text-xs"
                 autoFocus
               />

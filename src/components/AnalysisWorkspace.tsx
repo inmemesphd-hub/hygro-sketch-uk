@@ -2,7 +2,7 @@ import { useState, useMemo, useRef, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Construction, ConstructionLayer, ClimateData, AnalysisResult } from '@/types/materials';
 import { ukMaterialDatabase } from '@/data/ukMaterials';
-import { ukMonthlyClimateData, getCityClimateData, ukCities, HumidityClass } from '@/data/ukClimate';
+import { ukMonthlyClimateData, getCityClimateData, ukCities, HumidityClass, reorderToOctSep } from '@/data/ukClimate';
 import { performCondensationAnalysis, calculateUValue, calculateUValueWithoutBridging, calculateGroundFloorUValue } from '@/utils/hygrothermalCalculations';
 import { ConstructionBuilder } from '@/components/ConstructionBuilder';
 import { ClimateInput } from '@/components/ClimateInput';
@@ -247,7 +247,9 @@ export default function AnalysisWorkspace() {
             ? { perimeter: buildup.perimeter || 40, area: buildup.area || 100, floorType: buildup.floor_type as 'ground' | 'suspended' | 'solid' | 'intermediate' }
             : undefined;
           
-          const result = performCondensationAnalysis(buildupConstruction, climateData, groundFloorParams);
+          // Reorder climate data to Oct-Sep for analysis
+          const octSepClimateData = reorderToOctSep(climateData);
+          const result = performCondensationAnalysis(buildupConstruction, octSepClimateData, groundFloorParams);
           results.set(buildupId, result);
         }
         
@@ -282,7 +284,9 @@ export default function AnalysisWorkspace() {
           ? { perimeter, area, floorType }
           : undefined;
         
-        const result = performCondensationAnalysis(construction, climateData, groundFloorParams);
+        // Reorder climate data to Oct-Sep for analysis
+        const octSepClimateData = reorderToOctSep(climateData);
+        const result = performCondensationAnalysis(construction, octSepClimateData, groundFloorParams);
         setAnalysisResult(result);
         setActiveTab('results');
       } catch (error) {

@@ -16,9 +16,10 @@ interface GlastaDiagramProps {
   onXAxisModeChange?: (mode: 'thickness' | 'sd') => void;
 }
 
+// October to September order for UK heating season
 const months = [
-  'January', 'February', 'March', 'April', 'May', 'June',
-  'July', 'August', 'September', 'October', 'November', 'December'
+  'October', 'November', 'December', 'January', 'February', 'March',
+  'April', 'May', 'June', 'July', 'August', 'September'
 ];
 
 const CHART_HEIGHT = 350;

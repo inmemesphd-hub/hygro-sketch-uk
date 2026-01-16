@@ -366,6 +366,19 @@ export const ukCities = ukCityClimateData.map(city => ({
 // For backwards compatibility - keep the old names but map to city data
 export const ukRegions = ukCities;
 
+// October-September month order for UK heating season analysis
+export const OCT_SEP_MONTH_ORDER = [
+  'October', 'November', 'December', 'January', 'February', 'March',
+  'April', 'May', 'June', 'July', 'August', 'September'
+];
+
+// Reorder climate data from Jan-Dec to Oct-Sep
+export function reorderToOctSep<T extends { month: string }>(data: T[]): T[] {
+  const octIndex = data.findIndex(d => d.month === 'October');
+  if (octIndex === -1) return data;
+  return [...data.slice(octIndex), ...data.slice(0, octIndex)];
+}
+
 // Get climate data for a specific city with humidity class-based internal conditions
 export const getCityClimateData = (cityId: string, humidityClass: HumidityClass = 3): ClimateData[] => {
   const city = ukCityClimateData.find(c => c.id === cityId);
