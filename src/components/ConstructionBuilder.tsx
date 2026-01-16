@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import { Construction, ConstructionLayer, Material } from '@/types/materials';
 import { ukMaterialDatabase } from '@/data/ukMaterials';
 import { MaterialLibrary } from './MaterialLibrary';
@@ -14,12 +14,20 @@ import {
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
-import { calculateUValue, calculateLayerThermalResistance, calculateUValueWithoutBridging } from '@/utils/hygrothermalCalculations';
+import { calculateUValue, calculateLayerThermalResistance, calculateUValueWithoutBridging, calculateGroundFloorUValue } from '@/utils/hygrothermalCalculations';
+import { FloorType } from './JunctionCanvas';
 
 interface ConstructionBuilderProps {
   construction: Construction;
   onChange: (construction: Construction) => void;
   onSave?: () => void;
+  // Floor-specific props for U-value display
+  constructionType?: 'wall' | 'floor';
+  floorType?: FloorType;
+  perimeter?: number;
+  area?: number;
+  wallThickness?: number;
+  soilConductivity?: number;
 }
 
 const layerColors = [
@@ -33,7 +41,17 @@ const layerColors = [
   'bg-layer-8',
 ];
 
-export function ConstructionBuilder({ construction, onChange, onSave }: ConstructionBuilderProps) {
+export function ConstructionBuilder({ 
+  construction, 
+  onChange, 
+  onSave,
+  constructionType = 'wall',
+  floorType = 'ground',
+  perimeter = 40,
+  area = 100,
+  wallThickness = 0.3,
+  soilConductivity = 2.0,
+}: ConstructionBuilderProps) {
   const [materialLibraryOpen, setMaterialLibraryOpen] = useState(false);
   const [expandedLayer, setExpandedLayer] = useState<string | null>(null);
   const [addingToIndex, setAddingToIndex] = useState<number | null>(null);
@@ -41,8 +59,19 @@ export function ConstructionBuilder({ construction, onChange, onSave }: Construc
   const [replacingLayerIndex, setReplacingLayerIndex] = useState<number | null>(null);
   const [editingRsi, setEditingRsi] = useState(false);
   const [editingRse, setEditingRse] = useState(false);
+  
+  // Local edit states for surface resistances
+  const [rsiEdit, setRsiEdit] = useState<string>('');
+  const [rseEdit, setRseEdit] = useState<string>('');
 
-  const uValue = calculateUValue(construction);
+  // Calculate U-value based on construction type
+  const uValue = useMemo(() => {
+    if (constructionType === 'floor' && (floorType === 'ground' || floorType === 'solid' || floorType === 'suspended')) {
+      return calculateGroundFloorUValue(construction, perimeter, area, floorType, wallThickness, soilConductivity);
+    }
+    return calculateUValue(construction);
+  }, [construction, constructionType, floorType, perimeter, area, wallThickness, soilConductivity]);
+  
   const uValueNoBridging = calculateUValueWithoutBridging(construction);
 
   const addLayer = (material: Material) => {
@@ -127,14 +156,29 @@ export function ConstructionBuilder({ construction, onChange, onSave }: Construc
     }
   };
 
-  const updateSurfaceResistance = (type: 'internal' | 'external', value: string) => {
-    const numValue = parseFloat(value);
-    if (!isNaN(numValue) && numValue >= 0 && numValue <= 1) {
-      if (type === 'internal') {
-        onChange({ ...construction, internalSurfaceResistance: numValue });
-      } else {
-        onChange({ ...construction, externalSurfaceResistance: numValue });
-      }
+  // Handlers for Rsi
+  const handleRsiFocus = () => {
+    setRsiEdit(construction.internalSurfaceResistance.toString());
+  };
+
+  const handleRsiBlur = () => {
+    setEditingRsi(false);
+    const val = parseFloat(rsiEdit);
+    if (!isNaN(val) && val >= 0 && val <= 1) {
+      onChange({ ...construction, internalSurfaceResistance: val });
+    }
+  };
+
+  // Handlers for Rse
+  const handleRseFocus = () => {
+    setRseEdit(construction.externalSurfaceResistance.toString());
+  };
+
+  const handleRseBlur = () => {
+    setEditingRse(false);
+    const val = parseFloat(rseEdit);
+    if (!isNaN(val) && val >= 0 && val <= 1) {
+      onChange({ ...construction, externalSurfaceResistance: val });
     }
   };
 
@@ -187,21 +231,23 @@ export function ConstructionBuilder({ construction, onChange, onSave }: Construc
             <div className="flex items-center gap-1">
               <span className="text-muted-foreground">Rsi =</span>
               <Input
-                type="number"
-                step="0.01"
-                min="0"
-                max="1"
-                value={construction.internalSurfaceResistance}
-                onChange={(e) => updateSurfaceResistance('internal', e.target.value)}
+                type="text"
+                inputMode="decimal"
+                value={rsiEdit}
+                onFocus={handleRsiFocus}
+                onChange={(e) => setRsiEdit(e.target.value)}
+                onBlur={handleRsiBlur}
                 className="w-20 h-6 text-xs"
-                onBlur={() => setEditingRsi(false)}
                 autoFocus
               />
               <span className="text-muted-foreground">m²K/W</span>
             </div>
           ) : (
             <button
-              onClick={() => setEditingRsi(true)}
+              onClick={() => {
+                setEditingRsi(true);
+                setRsiEdit(construction.internalSurfaceResistance.toString());
+              }}
               className="flex items-center gap-1 hover:text-primary transition-colors"
             >
               <span className="font-mono">(Rsi = {construction.internalSurfaceResistance} m²K/W)</span>
@@ -483,21 +529,23 @@ export function ConstructionBuilder({ construction, onChange, onSave }: Construc
             <div className="flex items-center gap-1">
               <span className="text-muted-foreground">Rse =</span>
               <Input
-                type="number"
-                step="0.01"
-                min="0"
-                max="1"
-                value={construction.externalSurfaceResistance}
-                onChange={(e) => updateSurfaceResistance('external', e.target.value)}
+                type="text"
+                inputMode="decimal"
+                value={rseEdit}
+                onFocus={handleRseFocus}
+                onChange={(e) => setRseEdit(e.target.value)}
+                onBlur={handleRseBlur}
                 className="w-20 h-6 text-xs"
-                onBlur={() => setEditingRse(false)}
                 autoFocus
               />
               <span className="text-muted-foreground">m²K/W</span>
             </div>
           ) : (
             <button
-              onClick={() => setEditingRse(true)}
+              onClick={() => {
+                setEditingRse(true);
+                setRseEdit(construction.externalSurfaceResistance.toString());
+              }}
               className="flex items-center gap-1 hover:text-primary transition-colors"
             >
               <span className="font-mono">(Rse = {construction.externalSurfaceResistance} m²K/W)</span>

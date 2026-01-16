@@ -2,11 +2,20 @@ import { Construction, ConstructionLayer, ClimateData, AnalysisResult, MonthlyAn
 
 // Constants
 const GAS_CONSTANT = 461.5; // J/(kg·K) for water vapour
-const SOIL_THERMAL_CONDUCTIVITY = 1.5; // W/(m·K) for clay soil (BS EN ISO 13370)
 
 // BS EN ISO 13788 constants for vapour diffusion
 const DELTA_0 = 2e-10; // Water vapour permeability of air (kg/(m·s·Pa))
 const SECONDS_PER_MONTH = 30.4 * 24 * 3600; // Average seconds per month
+
+// Default soil thermal conductivities per BS EN ISO 13370
+export const SOIL_TYPES = {
+  clay_silt: { name: 'Clay or Silt', lambda: 1.5 },
+  sand_gravel: { name: 'Sand or Gravel', lambda: 2.0 },
+  rock: { name: 'Homogeneous Rock', lambda: 3.5 },
+  custom: { name: 'Custom', lambda: 2.0 },
+} as const;
+
+export type SoilType = keyof typeof SOIL_TYPES;
 
 /**
  * Calculate saturation vapour pressure using Magnus formula
@@ -244,52 +253,70 @@ export function calculateUValueWithoutBridging(construction: Construction): numb
 }
 
 /**
+ * Calculate floor thermal resistance Rf (excluding surface resistances)
+ * Uses the Combined Method for bridged layers
+ */
+function calculateFloorRf(construction: Construction): number {
+  // Get total R using the Combined Method (includes surface resistances)
+  const totalR = 1 / calculateUValue(construction);
+  // Subtract surface resistances to get floor construction R only
+  const Rf = totalR - construction.internalSurfaceResistance - construction.externalSurfaceResistance;
+  return Math.max(0, Rf);
+}
+
+/**
  * Calculate ground floor U-value using BS EN ISO 13370 methodology
+ * Updated to use Combined Method R_f and correct formula per BR443
+ * 
  * @param construction - The floor construction
  * @param perimeter - Exposed perimeter in meters
  * @param area - Floor area in m²
  * @param floorType - Type of ground floor (solid, suspended)
+ * @param wallThickness - Wall thickness in meters (default 0.3m)
+ * @param soilConductivity - Soil thermal conductivity W/(m·K) (default 2.0 for sand/gravel)
  * @returns Adjusted U-value accounting for ground heat transfer
  */
 export function calculateGroundFloorUValue(
   construction: Construction,
   perimeter: number,
   area: number,
-  floorType: 'ground' | 'suspended' | 'solid' | 'intermediate' = 'ground'
+  floorType: 'ground' | 'suspended' | 'solid' | 'intermediate' = 'ground',
+  wallThickness: number = 0.3,
+  soilConductivity: number = 2.0
 ): number {
   // For intermediate floors, just use standard calculation
   if (floorType === 'intermediate') {
     return calculateUValue(construction);
   }
 
-  // P/A ratio
-  const pARatio = perimeter / area;
+  // Ensure valid inputs
+  const P = Math.max(perimeter, 0.001);
+  const A = Math.max(area, 0.001);
+  const w = Math.max(wallThickness, 0.001);
+  const lambda_g = Math.max(soilConductivity, 0.1);
   
-  // Characteristic dimension B' = A / (0.5 × P) = 2A/P
-  const bPrime = (2 * area) / perimeter;
+  // Characteristic dimension B' = 2 × A / P (per BS EN ISO 13370)
+  const bPrime = (2 * A) / P;
   
-  // Calculate total thermal resistance of floor construction (excluding surface resistances for ground calc)
-  let Rf = 0;
-  for (const layer of construction.layers) {
-    Rf += calculateLayerThermalResistance(layer);
-  }
+  // Calculate floor thermal resistance Rf using Combined Method (excludes surface resistances)
+  const Rf = calculateFloorRf(construction);
   
-  // Equivalent thickness d_t = w + λ(Rsi + Rf + Rse)
-  // where w is wall thickness (assumed 0.3m) and λ is soil conductivity
-  const w = 0.3; // Assumed perimeter wall thickness
-  const dt = w + SOIL_THERMAL_CONDUCTIVITY * (construction.internalSurfaceResistance + Rf + construction.externalSurfaceResistance);
+  // Equivalent thickness d_t = w + λ_g × Rf
+  // Per BS EN ISO 13370, surface resistances are NOT included in d_t for ground floors
+  // since the ground thermal resistance replaces Rse
+  const dt = w + lambda_g * Rf;
   
   let Ug: number;
   
   if (floorType === 'suspended') {
     // Suspended floor calculation per BS EN ISO 13370
-    // U = 1 / (Rsi + Rf + Rse + 1/Ug + 1/Ux)
+    // U = 1 / (Rsi + Rf + 1/Ug + 1/Ux)
     // Simplified: Use base U-value with ground resistance adjustment
     const baseU = calculateUValue(construction);
     
     // Ground resistance approximation for suspended floors
     // Account for underfloor space ventilation
-    const Rg = bPrime / (2 * SOIL_THERMAL_CONDUCTIVITY);
+    const Rg = bPrime / (2 * lambda_g);
     
     // Effective U-value considering ground and ventilation
     const ventilationFactor = 0.0015; // m²/m standard ventilation
@@ -304,11 +331,11 @@ export function calculateGroundFloorUValue(
   } else {
     // Solid/Ground floor - BS EN ISO 13370 formula
     if (dt < bPrime) {
-      // Well-insulated floor
-      Ug = (2 * SOIL_THERMAL_CONDUCTIVITY) / (Math.PI * bPrime + dt) * Math.log((Math.PI * bPrime) / dt + 1);
+      // Well-insulated floor: U_g = (2λ_g / πB' + d_t) × ln(πB'/d_t + 1)
+      Ug = (2 * lambda_g) / (Math.PI * bPrime + dt) * Math.log((Math.PI * bPrime) / dt + 1);
     } else {
-      // Poorly-insulated floor (dt >= B')
-      Ug = SOIL_THERMAL_CONDUCTIVITY / (0.457 * bPrime + dt);
+      // Poorly-insulated floor (dt >= B'): U_g = λ_g / (0.457 × B' + d_t)
+      Ug = lambda_g / (0.457 * bPrime + dt);
     }
   }
   
@@ -474,17 +501,12 @@ export function detectCondensation(
  * Calculate monthly analysis over a year using Glaser method
  * per BS EN ISO 13788
  * 
- * The Glaser method calculates vapour diffusion through the construction
- * and determines condensation/evaporation at interfaces where
- * the vapour pressure exceeds saturation pressure.
+ * This implementation correctly calculates condensation and evaporation
+ * at interfaces where vapour pressure conditions allow moisture accumulation
+ * or drying.
  * 
  * Key formula: g = δ₀ × ΔP / S_d (kg/m²s)
  * where δ₀ = 2 × 10⁻¹⁰ kg/(m·s·Pa) is water vapour permeability of air
- * 
- * For each interface with condensation risk:
- * - g_in = flow from inside to interface
- * - g_out = flow from interface to outside  
- * - Net = g_in - g_out (positive = condensation, negative = evaporation)
  */
 export function calculateMonthlyAnalysis(
   construction: Construction,
@@ -493,9 +515,9 @@ export function calculateMonthlyAnalysis(
   const monthlyResults: MonthlyAnalysis[] = [];
   let cumulativeAccumulation = 0;
   
-  // Track which interface has accumulated moisture
-  // In reality there may be multiple condensation planes, but we simplify to track the primary one
-  let condensationInterfaceIndex = -1;
+  // Track the primary condensation interface index
+  let primaryCondensationInterface = -1;
+  let accumulatedMoistureAtInterface = 0;
 
   // Calculate cumulative S_d at each interface
   const sdValues: number[] = [0]; // Start at internal surface
@@ -517,82 +539,99 @@ export function calculateMonthlyAnalysis(
       climate.externalTemp
     );
 
-    // Track total condensation and evaporation for this month
+    // Find the condensation plane (interface where vapour pressure would exceed saturation)
+    // This is where the modified vapour pressure line touches the saturation curve
+    let condensationInterface = -1;
+    let maxCondensationPotential = 0;
+    
+    for (let i = 1; i < sdValues.length; i++) {
+      const sdToInterface = sdValues[i];
+      const tempAtInterface = tempGradient[i]?.temperature ?? climate.externalTemp;
+      const pSatAtInterface = calculateSaturationPressure(tempAtInterface);
+      
+      // Linear interpolation of vapour pressure at this interface
+      const pAtInterface = pInternal - (pInternal - pExternal) * (sdToInterface / totalSd);
+      
+      // Check if vapour pressure exceeds saturation (condensation would occur)
+      if (pAtInterface > pSatAtInterface) {
+        const excess = pAtInterface - pSatAtInterface;
+        if (excess > maxCondensationPotential) {
+          maxCondensationPotential = excess;
+          condensationInterface = i;
+        }
+      }
+    }
+    
+    // If we found a new condensation interface, update tracking
+    if (condensationInterface > 0) {
+      primaryCondensationInterface = condensationInterface;
+    }
+    
+    // Calculate condensation or evaporation
     let monthlyCondensation = 0;
     let monthlyEvaporation = 0;
     
-    // For each interface, calculate the vapour flow balance
-    for (let i = 1; i < sdValues.length; i++) {
+    if (primaryCondensationInterface > 0) {
+      const i = primaryCondensationInterface;
       const sdToInterface = sdValues[i];
       const sdFromInterface = totalSd - sdToInterface;
       const tempAtInterface = tempGradient[i]?.temperature ?? climate.externalTemp;
       const pSatAtInterface = calculateSaturationPressure(tempAtInterface);
       
-      // Vapour flow from inside towards this interface (g_in)
-      // g = δ₀ × (P_in - P_interface) / S_d_to_interface
-      const gIn = (DELTA_0 / Math.max(sdToInterface, 0.001)) * (pInternal - pSatAtInterface);
+      // Calculate vapour flow INTO the interface from inside (g_in)
+      // g_in = δ₀ × (P_internal - P_sat) / S_d_to_interface
+      // Only positive if internal pressure > saturation (vapour moving towards colder side)
+      const gIn = sdToInterface > 0 
+        ? (DELTA_0 * Math.max(0, pInternal - pSatAtInterface)) / sdToInterface
+        : 0;
       
-      // Vapour flow from this interface to outside (g_out)  
-      // g = δ₀ × (P_interface - P_out) / S_d_from_interface
-      const gOut = (DELTA_0 / Math.max(sdFromInterface, 0.001)) * (pSatAtInterface - pExternal);
+      // Calculate vapour flow OUT of the interface to outside (g_out)
+      // g_out = δ₀ × (P_sat - P_external) / S_d_from_interface
+      // Only positive if saturation > external (vapour can leave to outside)
+      const gOut = sdFromInterface > 0 
+        ? (DELTA_0 * Math.max(0, pSatAtInterface - pExternal)) / sdFromInterface
+        : 0;
       
-      // Net flow at this interface (kg/m²/s)
-      // Positive = condensation (more coming in than going out)
-      // Negative = evaporation potential (more going out than coming in)
+      // Net flow: positive = condensation, negative = evaporation potential
       const gNet = gIn - gOut;
+      const monthlyFlowGrams = gNet * SECONDS_PER_MONTH * 1000; // Convert to g/m²
       
-      // Convert to g/m² per month
-      const monthlyFlow = gNet * SECONDS_PER_MONTH * 1000;
-      
-      // Check if this interface is a condensation plane
-      // (vapour pressure would exceed saturation, OR there's already moisture here)
-      const isCondensationInterface = i === condensationInterfaceIndex || gIn > 0 && gIn > gOut;
-      
-      if (isCondensationInterface || (cumulativeAccumulation > 0 && condensationInterfaceIndex === i)) {
-        if (monthlyFlow > 0) {
-          // Condensation occurring
-          monthlyCondensation += monthlyFlow;
-          condensationInterfaceIndex = i;
-        } else {
-          // Evaporation potential at this interface
-          // Can only evaporate what has accumulated
-          const potentialEvap = Math.abs(monthlyFlow);
-          monthlyEvaporation += potentialEvap;
-        }
+      if (monthlyFlowGrams > 0) {
+        // Condensation occurring
+        monthlyCondensation = monthlyFlowGrams;
+        accumulatedMoistureAtInterface += monthlyCondensation;
+      } else if (accumulatedMoistureAtInterface > 0 || cumulativeAccumulation > 0) {
+        // Evaporation can occur when there's accumulated moisture
+        // The moisture at the interface acts as a vapour source at saturation pressure
+        // Vapour can flow both inward and outward
+        
+        // Flow to inside (evaporating towards room)
+        const gEvapIn = sdToInterface > 0 
+          ? (DELTA_0 * Math.max(0, pSatAtInterface - pInternal)) / sdToInterface
+          : 0;
+        
+        // Flow to outside (evaporating to exterior)
+        const gEvapOut = sdFromInterface > 0 
+          ? (DELTA_0 * Math.max(0, pSatAtInterface - pExternal)) / sdFromInterface
+          : 0;
+        
+        const totalEvapRate = gEvapIn + gEvapOut;
+        monthlyEvaporation = totalEvapRate * SECONDS_PER_MONTH * 1000;
+        
+        // Cannot evaporate more than what's accumulated
+        monthlyEvaporation = Math.min(monthlyEvaporation, cumulativeAccumulation + monthlyCondensation);
       }
     }
-    
-    // If there's accumulated moisture but no active condensation interface found,
-    // use the previously tracked interface for evaporation calculation
-    if (cumulativeAccumulation > 0 && monthlyCondensation === 0 && condensationInterfaceIndex > 0) {
-      const sdToInterface = sdValues[condensationInterfaceIndex];
-      const sdFromInterface = totalSd - sdToInterface;
-      const tempAtInterface = tempGradient[condensationInterfaceIndex]?.temperature ?? climate.externalTemp;
-      const pSatAtInterface = calculateSaturationPressure(tempAtInterface);
-      
-      // During drying, moisture at the interface creates a vapour source
-      // Vapour flows both inward and outward from the wet interface
-      // g_evap_in = δ₀ × (P_sat - P_in) / S_d_to_interface (flow to inside)
-      // g_evap_out = δ₀ × (P_sat - P_out) / S_d_from_interface (flow to outside)
-      
-      const gEvapIn = (DELTA_0 / Math.max(sdToInterface, 0.001)) * Math.max(0, pSatAtInterface - pInternal);
-      const gEvapOut = (DELTA_0 / Math.max(sdFromInterface, 0.001)) * Math.max(0, pSatAtInterface - pExternal);
-      
-      // Total evaporation rate
-      const gEvapTotal = gEvapIn + gEvapOut;
-      monthlyEvaporation = gEvapTotal * SECONDS_PER_MONTH * 1000;
-    }
-    
-    // Evaporation cannot exceed accumulated moisture
-    monthlyEvaporation = Math.min(monthlyEvaporation, cumulativeAccumulation + monthlyCondensation);
     
     // Calculate net change (can be positive or negative)
     const netAccumulation = monthlyCondensation - monthlyEvaporation;
     cumulativeAccumulation = Math.max(0, cumulativeAccumulation + netAccumulation);
+    accumulatedMoistureAtInterface = Math.max(0, accumulatedMoistureAtInterface + netAccumulation);
     
     // Reset condensation interface if all moisture has evaporated
     if (cumulativeAccumulation <= 0.01) {
-      condensationInterfaceIndex = -1;
+      primaryCondensationInterface = -1;
+      accumulatedMoistureAtInterface = 0;
     }
 
     monthlyResults.push({
@@ -613,7 +652,13 @@ export function calculateMonthlyAnalysis(
 export function performCondensationAnalysis(
   construction: Construction,
   climateData: ClimateData[],
-  groundFloorParams?: { perimeter: number; area: number; floorType: 'ground' | 'suspended' | 'solid' | 'intermediate' }
+  groundFloorParams?: { 
+    perimeter: number; 
+    area: number; 
+    floorType: 'ground' | 'suspended' | 'solid' | 'intermediate';
+    wallThickness?: number;
+    soilConductivity?: number;
+  }
 ): AnalysisResult {
   // Calculate U-value - use ground floor method if params provided
   let uValue: number;
@@ -622,7 +667,9 @@ export function performCondensationAnalysis(
       construction,
       groundFloorParams.perimeter,
       groundFloorParams.area,
-      groundFloorParams.floorType
+      groundFloorParams.floorType,
+      groundFloorParams.wallThickness ?? 0.3,
+      groundFloorParams.soilConductivity ?? 2.0
     );
   } else {
     uValue = calculateUValue(construction);
