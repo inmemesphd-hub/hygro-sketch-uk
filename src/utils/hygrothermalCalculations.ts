@@ -351,41 +351,59 @@ export function calculateGroundFloorUValue(
  * per BS EN ISO 13788
  * 
  * The mould risk limit uses 80% RH instead of dew point (100% RH)
- * to provide adequate safety margin against mould growth
+ * to provide adequate safety margin against mould growth.
+ * 
+ * ISO 13788 Method:
+ * Step A: Calculate internal vapour pressure p_v from T_int and RH_int
+ * Step B: Determine required saturation pressure at surface: P_sat(T_si,min) = p_v / 0.8
+ * Step C: Convert that saturation pressure back to temperature T_si,min
+ * Step D: Calculate required temperature factor: f_Rsi,min = (T_si,min - T_ext) / (T_int - T_ext)
+ * 
+ * The actual surface temperature T_si is calculated using Rsi = 0.13 m²K/W
+ * and should be compared to T_si,min to determine if mould risk exists.
  */
 export function calculateSurfaceCondensationData(
   construction: Construction,
   climateData: ClimateData[]
 ): SurfaceCondensationMonth[] {
   const uValue = calculateUValue(construction);
-  const a = 17.27, b = 237.7;
+  // ISO 13788 coefficients for saturation pressure (for inversion)
+  const a = 17.269, b = 237.3;
+  
+  // Standard internal surface resistance for mould risk assessment per ISO 13788
+  const Rsi = 0.13;
   
   return climateData.map(month => {
-    const deltaT = month.internalTemp - month.externalTemp;
-    const tsi = month.internalTemp - (uValue * deltaT * construction.internalSurfaceResistance);
+    const tInt = month.internalTemp;
+    const tExt = month.externalTemp;
+    const deltaT = tInt - tExt;
     
-    // Calculate internal partial vapour pressure (P_v)
-    const pInternal = calculateVapourPressure(month.internalTemp, month.internalRH);
+    // Step A: Calculate internal partial vapour pressure (p_v)
+    const pInternal = calculateVapourPressure(tInt, month.internalRH);
     
-    // Mould Risk Limit: 80% RH
-    // Find P_sat where RH would be 80%: P_sat = P_v / 0.8
+    // Step B: Mould Risk Limit at 80% RH
+    // Find required saturation pressure: P_sat = p_v / 0.8
     const pSatRequired = pInternal / 0.8;
     
-    // Find T_si,min using inverse Magnus formula
-    // P_sat = 610.78 * exp((a * T) / (b + T))
-    // Solving for T: T = (b * ln(P_sat/610.78)) / (a - ln(P_sat/610.78))
-    const lnRatio = Math.log(pSatRequired / 610.78);
+    // Step C: Find T_si,min using inverse Magnus formula
+    // P_sat = 610.5 * exp((a * T) / (b + T))
+    // Solving for T: T = (b * ln(P_sat/610.5)) / (a - ln(P_sat/610.5))
+    const lnRatio = Math.log(pSatRequired / 610.5);
     const tSiMin = (b * lnRatio) / (a - lnRatio);
     
-    // Calculate Temperature Factor using mould risk T_si,min
-    // f_Rsi = (T_si,min - T_ext) / (T_int - T_ext)
-    const fRsiMin = deltaT !== 0 ? (tSiMin - month.externalTemp) / deltaT : 0.5;
+    // Step D: Calculate Minimum Temperature Factor (f_Rsi,min)
+    // f_Rsi,min = (T_si,min - T_ext) / (T_int - T_ext)
+    const fRsiMin = deltaT !== 0 ? (tSiMin - tExt) / deltaT : 0;
+    
+    // Calculate actual surface temperature T_si using standard Rsi
+    // T_si = T_int - U × Rsi × (T_int - T_ext)
+    const tsi = tInt - (uValue * Rsi * deltaT);
     
     return {
       month: month.month,
-      externalTemp: month.externalTemp,
+      externalTemp: tExt,
       externalRH: month.externalRH,
-      internalTemp: month.internalTemp,
+      internalTemp: tInt,
       internalRH: month.internalRH,
       minTempFactor: Math.round(fRsiMin * 1000) / 1000,
       minTsi: Math.round(tSiMin * 10) / 10,
@@ -427,7 +445,16 @@ export function calculateTemperatureGradient(
 }
 
 /**
- * Calculate vapour pressure at each interface (Glaser method)
+ * Calculate vapour pressure at each interface using ISO 13788 tangent construction
+ * 
+ * Key ISO 13788 principles:
+ * 1. P_v can NEVER exceed P_sat at any point
+ * 2. When the initial straight-line P_v would exceed P_sat, find the tangent
+ *    from the source that touches but doesn't cross P_sat
+ * 3. Condensation occurs only at the interface where tangent touches P_sat
+ * 
+ * This function returns the CAPPED vapour pressure line that follows
+ * the tangent construction rules.
  */
 export function calculateVapourPressureGradient(
   construction: Construction,
@@ -435,49 +462,146 @@ export function calculateVapourPressureGradient(
   internalRH: number,
   externalTemp: number,
   externalRH: number
-): { position: number; pressure: number; saturation: number }[] {
+): { position: number; pressure: number; saturation: number; isCondensationInterface?: boolean }[] {
   const pInternal = calculateVapourPressure(internalTemp, internalRH);
   const pExternal = calculateVapourPressure(externalTemp, externalRH);
-  const deltaP = pInternal - pExternal;
 
-  // Calculate total vapour resistance
-  let totalGv = 0;
-  for (const layer of construction.layers) {
-    totalGv += calculateLayerVapourResistance(layer);
-  }
-
-  const vapourFlux = deltaP / totalGv;
+  // Calculate temperature and saturation at each interface
   const tempGradient = calculateTemperatureGradient(construction, internalTemp, externalTemp);
-
-  const gradient: { position: number; pressure: number; saturation: number }[] = [];
-  let cumulativeGv = 0;
-  let position = 0;
-
-  // Internal surface (position 0)
+  
+  // Build interface data with cumulative S_d
+  interface InterfaceData {
+    position: number;
+    sdFromInternal: number;
+    temperature: number;
+    pSat: number;
+    layerIndex: number;
+  }
+  
+  const interfaces: InterfaceData[] = [];
+  let runningSD = 0;
+  let runningPosition = 0;
+  
+  // Internal surface
   const internalSurfaceTemp = tempGradient[0]?.temperature ?? internalTemp;
-  gradient.push({
-    position: 0,
-    pressure: pInternal,
-    saturation: calculateSaturationPressure(internalSurfaceTemp),
+  interfaces.push({ 
+    position: 0, 
+    sdFromInternal: 0,
+    temperature: internalSurfaceTemp,
+    pSat: calculateSaturationPressure(internalSurfaceTemp),
+    layerIndex: -1
   });
-
-  // Through each layer
+  
   for (let i = 0; i < construction.layers.length; i++) {
     const layer = construction.layers[i];
-    cumulativeGv += calculateLayerVapourResistance(layer);
-    position += layer.thickness;
-
-    const pressure = pInternal - vapourFlux * cumulativeGv;
+    runningSD += calculateSd(layer);
+    runningPosition += layer.thickness;
     const temp = tempGradient[i + 1]?.temperature ?? externalTemp;
-
-    gradient.push({
-      position,
-      pressure,
-      saturation: calculateSaturationPressure(temp),
+    interfaces.push({ 
+      position: runningPosition, 
+      sdFromInternal: runningSD,
+      temperature: temp,
+      pSat: calculateSaturationPressure(temp),
+      layerIndex: i 
     });
   }
+  
+  const totalSd = runningSD;
+  
+  // Implement tangent construction algorithm
+  // Start from internal, find if/where P_v would exceed P_sat
+  const result: { position: number; pressure: number; saturation: number; isCondensationInterface?: boolean }[] = [];
+  
+  // Initial uncapped line: linear from pInternal to pExternal based on S_d
+  // Check if this line crosses any P_sat curve
+  let condensationInterfaceIdx = -1;
+  
+  for (let i = 1; i < interfaces.length - 1; i++) {
+    const iface = interfaces[i];
+    const sdFraction = iface.sdFromInternal / totalSd;
+    const pUncapped = pInternal - (pInternal - pExternal) * sdFraction;
+    
+    // If uncapped pressure exceeds saturation, we need a tangent
+    if (pUncapped > iface.pSat) {
+      // Find the interface with the steepest required slope (tangent point)
+      // Tangent from internal: slope = (pInternal - pSat) / sdToInterface
+      // We want the tangent that just touches (minimum slope to stay below P_sat)
+      const slopeToTouch = (pInternal - iface.pSat) / iface.sdFromInternal;
+      
+      if (condensationInterfaceIdx === -1) {
+        condensationInterfaceIdx = i;
+      } else {
+        // Check if this interface requires a shallower tangent (closer to P_sat)
+        const prevIface = interfaces[condensationInterfaceIdx];
+        const prevSlope = (pInternal - prevIface.pSat) / prevIface.sdFromInternal;
+        if (slopeToTouch < prevSlope) {
+          condensationInterfaceIdx = i;
+        }
+      }
+    }
+  }
+  
+  // Build the final P_v line
+  if (condensationInterfaceIdx === -1) {
+    // No condensation - straight line from internal to external
+    for (let i = 0; i < interfaces.length; i++) {
+      const iface = interfaces[i];
+      const sdFraction = totalSd > 0 ? iface.sdFromInternal / totalSd : 0;
+      const pressure = pInternal - (pInternal - pExternal) * sdFraction;
+      
+      result.push({
+        position: iface.position,
+        pressure: Math.round(pressure),
+        saturation: Math.round(iface.pSat),
+        isCondensationInterface: false
+      });
+    }
+  } else {
+    // Condensation at interface - construct tangent lines
+    const condIface = interfaces[condensationInterfaceIdx];
+    
+    // From internal to condensation point: tangent touching P_sat at condensation interface
+    // From condensation point to external: tangent from P_sat to external P_v
+    
+    for (let i = 0; i < interfaces.length; i++) {
+      const iface = interfaces[i];
+      let pressure: number;
+      
+      if (i <= condensationInterfaceIdx) {
+        // Tangent from internal to condensation point
+        // P_v decreases linearly from pInternal to P_sat at condensation interface
+        if (condIface.sdFromInternal > 0) {
+          const fractionToCondPoint = iface.sdFromInternal / condIface.sdFromInternal;
+          pressure = pInternal - (pInternal - condIface.pSat) * fractionToCondPoint;
+        } else {
+          pressure = pInternal;
+        }
+      } else {
+        // Tangent from condensation point to external
+        // P_v decreases linearly from P_sat at condensation interface to pExternal
+        const sdFromCondPoint = iface.sdFromInternal - condIface.sdFromInternal;
+        const sdCondToExternal = totalSd - condIface.sdFromInternal;
+        if (sdCondToExternal > 0) {
+          const fractionFromCondPoint = sdFromCondPoint / sdCondToExternal;
+          pressure = condIface.pSat - (condIface.pSat - pExternal) * fractionFromCondPoint;
+        } else {
+          pressure = pExternal;
+        }
+      }
+      
+      // Cap at saturation (P_v can never exceed P_sat)
+      pressure = Math.min(pressure, iface.pSat);
+      
+      result.push({
+        position: iface.position,
+        pressure: Math.round(pressure),
+        saturation: Math.round(iface.pSat),
+        isCondensationInterface: i === condensationInterfaceIdx
+      });
+    }
+  }
 
-  return gradient;
+  return result;
 }
 
 /**

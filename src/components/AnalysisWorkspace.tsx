@@ -858,15 +858,21 @@ export default function AnalysisWorkspace() {
       // Glaser Diagram page for this specific buildup
       pdf.addPage();
       
-      // Find worst month (highest condensation risk)
-      let worstMonth = 'January';
-      let worstCondensation = 0;
-      result.monthlyData.forEach((data, idx) => {
-        if (data.condensationAmount > worstCondensation) {
-          worstCondensation = data.condensationAmount;
-          worstMonth = climateData[idx]?.month || 'January';
-        }
-      });
+      // Use the selected Glaser month from UI, or calculate worst month if 'worst' selected
+      let displayMonthForGlaser = selectedGlaserMonth;
+      let isWorstMonth = false;
+      
+      if (selectedGlaserMonth === 'worst') {
+        isWorstMonth = true;
+        let worstCondensation = 0;
+        displayMonthForGlaser = 'January';
+        result.monthlyData.forEach((data, idx) => {
+          if (data.condensationAmount > worstCondensation) {
+            worstCondensation = data.condensationAmount;
+            displayMonthForGlaser = climateData[idx]?.month || 'January';
+          }
+        });
+      }
       
       pdf.setFillColor(...colors.primary);
       pdf.rect(0, 0, pageWidth, 15, 'F');
@@ -881,11 +887,13 @@ export default function AnalysisWorkspace() {
       pdf.setFontSize(10);
       pdf.setTextColor(...colors.header);
       pdf.setFont('helvetica', 'bold');
-      pdf.text(`${worstMonth}`, margin, y);
-      pdf.setFont('helvetica', 'normal');
-      pdf.setFontSize(8);
-      pdf.setTextColor(...colors.muted);
-      pdf.text(' (Worst case month for condensation)', margin + pdf.getTextWidth(worstMonth) + 2, y);
+      pdf.text(`${displayMonthForGlaser}`, margin, y);
+      if (isWorstMonth) {
+        pdf.setFont('helvetica', 'normal');
+        pdf.setFontSize(8);
+        pdf.setTextColor(...colors.muted);
+        pdf.text(' (Worst case month for condensation)', margin + pdf.getTextWidth(displayMonthForGlaser) + 2, y);
+      }
       y += 8;
       
       // Layer color palette function
