@@ -585,6 +585,11 @@ export function JunctionCanvas({
                     onFocus={handlePerimeterFocus}
                     onChange={(e) => setPerimeterEdit(e.target.value)}
                     onBlur={handlePerimeterBlur}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        e.currentTarget.blur();
+                      }
+                    }}
                     className="w-16 h-8 text-xs"
                     placeholder="m"
                   />
@@ -599,6 +604,11 @@ export function JunctionCanvas({
                     onFocus={handleAreaFocus}
                     onChange={(e) => setAreaEdit(e.target.value)}
                     onBlur={handleAreaBlur}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        e.currentTarget.blur();
+                      }
+                    }}
                     className="w-16 h-8 text-xs"
                     placeholder="m²"
                   />
@@ -613,6 +623,11 @@ export function JunctionCanvas({
                     onFocus={handleWallThicknessFocus}
                     onChange={(e) => setWallThicknessEdit(e.target.value)}
                     onBlur={handleWallThicknessBlur}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        e.currentTarget.blur();
+                      }
+                    }}
                     className="w-16 h-8 text-xs"
                     placeholder="m"
                   />
@@ -641,6 +656,11 @@ export function JunctionCanvas({
                       onFocus={handleSoilLambdaFocus}
                       onChange={(e) => setSoilLambdaEdit(e.target.value)}
                       onBlur={handleSoilLambdaBlur}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') {
+                          e.currentTarget.blur();
+                        }
+                      }}
                       className="w-14 h-8 text-xs"
                       placeholder="W/mK"
                     />
