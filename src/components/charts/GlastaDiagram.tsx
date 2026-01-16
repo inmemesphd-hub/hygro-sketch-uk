@@ -341,8 +341,26 @@ export function GlastaDiagram({
                 dot={{ fill: '#ef4444', r: 3 }}
               />
 
-              {/* ISO 13788: No condensation area shown - P_v never exceeds P_sat with tangent construction */}
-              {/* Condensation interfaces are marked at specific layer boundaries */}
+              {/* ISO 13788: Condensation interface markers at specific layer boundaries */}
+              {/* P_v never exceeds P_sat with tangent construction - mark where they touch */}
+              {chartData.map((point, idx) => 
+                point.isCondensationInterface ? (
+                  <ReferenceLine
+                    key={`cond-marker-${idx}`}
+                    x={xAxisMode === 'sd' ? point.sd : point.position}
+                    yAxisId="pressure"
+                    stroke="#ef4444"
+                    strokeWidth={2}
+                    strokeDasharray="none"
+                    label={{
+                      value: '●',
+                      position: 'center',
+                      fill: '#ef4444',
+                      fontSize: 18,
+                    }}
+                  />
+                ) : null
+              )}
             </ComposedChart>
           ) : (
             <div className="flex items-center justify-center h-full">
