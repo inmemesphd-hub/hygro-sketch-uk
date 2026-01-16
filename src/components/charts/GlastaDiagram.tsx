@@ -3,7 +3,7 @@ import { AnalysisResult, ClimateData, ConstructionLayer } from '@/types/material
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ComposedChart, Area, ReferenceLine } from 'recharts';
 import { cn } from '@/lib/utils';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { calculateSd } from '@/utils/hygrothermalCalculations';
+import { calculateSd, calculateVapourPressureGradient, calculateTemperatureGradient } from '@/utils/hygrothermalCalculations';
 
 interface GlastaDiagramProps {
   result: AnalysisResult;
@@ -103,12 +103,44 @@ export function GlastaDiagram({
 
   const displayMonth = currentMonth === 'worst' ? worstMonth : currentMonth;
 
+  // Calculate layer boundary positions (for condensation markers)
+  const layerBoundaryPositions = useMemo(() => {
+    const boundaries: number[] = [0]; // Internal surface at position 0
+    let pos = 0;
+    for (const layer of result.construction.layers) {
+      pos += layer.thickness;
+      boundaries.push(pos); // Each layer boundary
+    }
+    return boundaries;
+  }, [result.construction.layers]);
+
+  // CRITICAL: Recalculate vapour pressure gradient for the SELECTED month
+  // This ensures the Glaser diagram updates based on the month's climate data
+  const monthSpecificGradient = useMemo(() => {
+    const monthIndex = months.indexOf(displayMonth);
+    const monthClimate = climateData?.[monthIndex];
+    
+    if (!monthClimate) {
+      // Fallback to result's pre-calculated gradient if no climate data
+      return result.vapourPressureGradient;
+    }
+    
+    // Recalculate the vapour pressure gradient for this specific month
+    return calculateVapourPressureGradient(
+      result.construction,
+      monthClimate.internalTemp,
+      monthClimate.internalRH,
+      monthClimate.externalTemp,
+      monthClimate.externalRH
+    );
+  }, [result.construction, displayMonth, climateData, result.vapourPressureGradient]);
+
   // Build chart data with temperature line and S_d values
   // ISO 13788: P_v line uses tangent construction and never crosses P_sat
   const chartData = useMemo(() => {
     const data: any[] = [];
     
-    // Get the climate data for the selected month
+    // Get the climate data for the selected month for temperature gradient
     const monthIndex = months.indexOf(displayMonth);
     const monthClimate = climateData?.[monthIndex] || {
       internalTemp: 20,
@@ -117,10 +149,17 @@ export function GlastaDiagram({
       externalRH: 85
     };
 
+    // Recalculate temperature gradient for the selected month
+    const tempGradient = calculateTemperatureGradient(
+      result.construction,
+      monthClimate.internalTemp,
+      monthClimate.externalTemp
+    );
+
     let cumulativeSd = 0;
     
-    for (let i = 0; i < result.vapourPressureGradient.length; i++) {
-      const point = result.vapourPressureGradient[i];
+    for (let i = 0; i < monthSpecificGradient.length; i++) {
+      const point = monthSpecificGradient[i];
       
       // Calculate S_d for x-axis (cumulative through layers)
       if (i > 0 && i - 1 < result.construction.layers.length) {
@@ -128,37 +167,42 @@ export function GlastaDiagram({
         cumulativeSd += calculateSd(layer);
       }
       
-      // Get temperature at this position
-      const tempPoint = result.temperatureGradient.find(t => t.position === point.position);
-      const temperature = tempPoint?.temperature ?? 0;
+      // Get temperature at this position from recalculated gradient
+      const temperature = tempGradient[i]?.temperature ?? 0;
 
       // ISO 13788 tangent construction: P_v is already capped at P_sat
-      // The vapourPressure from the gradient already follows the tangent rule
+      // Check if this is a condensation interface (Pv = Psat at a layer boundary)
+      const isCondensationInterface = (point as any).isCondensationInterface || false;
+      
+      // Ensure condensation is only marked at exact layer boundaries
+      const isAtBoundary = layerBoundaryPositions.some(bp => Math.abs(bp - point.position) < 0.1);
+      
       data.push({
         position: point.position,
         sd: Math.round(cumulativeSd * 100) / 100, // S_d in metres
         vapourPressure: Math.round(point.pressure),
         saturationPressure: Math.round(point.saturation),
         temperature: Math.round(temperature * 10) / 10,
-        // Mark condensation interface where P_v touches P_sat
-        isCondensationInterface: (point as any).isCondensationInterface || false,
+        // Mark condensation interface ONLY at layer boundaries where P_v touches P_sat
+        isCondensationInterface: isCondensationInterface && isAtBoundary,
         // For visual indicator only - no "condensation zone" shown since P_v never exceeds P_sat
         condensation: 0,
       });
     }
 
     return data;
-  }, [result, displayMonth, climateData]);
+  }, [monthSpecificGradient, displayMonth, climateData, result.construction, layerBoundaryPositions]);
 
   // Find condensation interfaces (where P_v touches P_sat per tangent construction)
-  // ISO 13788: Condensation only occurs at specific material interfaces
+  // ISO 13788: Condensation only occurs at specific material interfaces (layer boundaries)
   const condensationInterfaces = useMemo(() => {
     const interfaces: { position: number; layerIndex: number }[] = [];
 
-    for (let i = 0; i < result.vapourPressureGradient.length; i++) {
-      const point = result.vapourPressureGradient[i];
-      // Check if this is marked as a condensation interface
-      if ((point as any).isCondensationInterface) {
+    for (let i = 0; i < monthSpecificGradient.length; i++) {
+      const point = monthSpecificGradient[i];
+      // Check if this is marked as a condensation interface AND is at a layer boundary
+      const isAtBoundary = layerBoundaryPositions.some(bp => Math.abs(bp - point.position) < 0.1);
+      if ((point as any).isCondensationInterface && isAtBoundary) {
         interfaces.push({ 
           position: point.position,
           layerIndex: i 
@@ -167,7 +211,7 @@ export function GlastaDiagram({
     }
 
     return interfaces;
-  }, [result]);
+  }, [monthSpecificGradient, layerBoundaryPositions]);
 
   // Layer boundaries for reference lines
   const layerBoundaries = useMemo(() => {
