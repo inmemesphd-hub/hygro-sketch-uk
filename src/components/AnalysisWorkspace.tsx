@@ -1154,56 +1154,34 @@ export default function AnalysisWorkspace() {
           pdf.line(scaleX(vpData[vpData.length - 1].position), scaleY(vpData[vpData.length - 1].pressure), diagramX, scaleY(vpData[vpData.length - 1].pressure));
         }
         
-        // Find and mark ALL condensation points (where lines cross/meet)
-        // This is where partial VP exceeds or equals saturation VP
+        // Find condensation interfaces using ISO 13788 tangent construction
+        // With tangent method, Pv never exceeds Psat - condensation occurs where they touch
         const condensationPoints: {x: number, y: number}[] = [];
         
-        for (let i = 0; i < vpData.length - 1; i++) {
-          const p1 = vpData[i];
-          const p2 = vpData[i + 1];
-          // Check if lines cross in this segment
-          const diff1 = p1.pressure - p1.saturation;
-          const diff2 = p2.pressure - p2.saturation;
+        // Check for interfaces marked as condensation points
+        for (let i = 0; i < vpData.length; i++) {
+          const point = vpData[i];
           
-          // Crossing point: lines change from one side to the other
-          if ((diff1 <= 0 && diff2 > 0) || (diff1 >= 0 && diff2 < 0)) {
-            // Interpolate crossing point
-            if (diff1 !== diff2) {
-              const t = Math.abs(diff1) / (Math.abs(diff1) + Math.abs(diff2));
-              const crossPos = p1.position + t * (p2.position - p1.position);
-              const crossPressure = p1.pressure + t * (p2.pressure - p1.pressure);
-              condensationPoints.push({
-                x: scaleX(crossPos),
-                y: scaleY(crossPressure)
-              });
-            }
+          // ISO 13788: Condensation interface is where Pv touches Psat exactly
+          // The vapourPressureGradient already has isCondensationInterface flag set
+          if ((point as any).isCondensationInterface) {
+            condensationPoints.push({
+              x: scaleX(point.position),
+              y: scaleY(point.pressure)
+            });
           }
           
-          // Also mark points where they meet exactly (diff1 === 0)
-          if (diff1 === 0) {
+          // Also check for near-equality (within 1 Pa tolerance)
+          if (Math.abs(point.pressure - point.saturation) <= 1 && 
+              !condensationPoints.some(cp => Math.abs(cp.x - scaleX(point.position)) < 1)) {
             condensationPoints.push({
-              x: scaleX(p1.position),
-              y: scaleY(p1.pressure)
+              x: scaleX(point.position),
+              y: scaleY(point.pressure)
             });
           }
         }
         
-        // Check last point too
-        const lastPoint = vpData[vpData.length - 1];
-        if (lastPoint.pressure >= lastPoint.saturation) {
-          const exists = condensationPoints.some(cp => 
-            Math.abs(cp.x - scaleX(lastPoint.position)) < 1 && 
-            Math.abs(cp.y - scaleY(lastPoint.pressure)) < 1
-          );
-          if (!exists) {
-            condensationPoints.push({
-              x: scaleX(lastPoint.position),
-              y: scaleY(lastPoint.pressure)
-            });
-          }
-        }
-        
-        // Draw ALL condensation markers (red circle with black outline) where lines meet
+        // Draw condensation interface markers (red circle with black outline)
         condensationPoints.forEach(point => {
           pdf.setFillColor(239, 68, 68);
           pdf.circle(point.x, point.y, 3, 'F');
@@ -1254,8 +1232,9 @@ export default function AnalysisWorkspace() {
         
         y += 10;
         
-        // Condensation zone indicator - unified RED color with BLACK outline matching chart
-        if (condensationPoints.length > 0 || vpData.some(p => p.pressure >= p.saturation)) {
+        // Condensation interface indicator - ISO 13788 tangent construction
+        // With tangent construction, P_v never exceeds P_sat; condensation is marked at interface where they meet
+        if (condensationPoints.length > 0) {
           pdf.setFillColor(239, 68, 68);
           pdf.circle(margin + 4, y - 2, 2.5, 'F');
           pdf.setDrawColor(0, 0, 0);
@@ -1263,7 +1242,7 @@ export default function AnalysisWorkspace() {
           pdf.circle(margin + 4, y - 2, 2.5, 'S');
           pdf.setTextColor(239, 68, 68);
           pdf.setFont('helvetica', 'bold');
-          pdf.text('Condensation zone (pv >= psat)', margin + 10, y);
+          pdf.text('Condensation interface (Pv = Psat)', margin + 10, y);
           y += 8;
         }
         
@@ -1328,11 +1307,11 @@ export default function AnalysisWorkspace() {
         y += 40;
       }
       
-      // Note about diagram
+      // Note about diagram - ISO 13788 methodology
       y += 5;
       pdf.setFontSize(7);
       pdf.setTextColor(...colors.muted);
-      const diagramNote = 'Glaser diagram per BS EN ISO 13788. Condensation occurs where partial vapour pressure exceeds saturation pressure. X-axis shows cumulative equivalent air layer thickness (Sd = thickness × μ).';
+      const diagramNote = 'Glaser diagram per BS EN ISO 13788 tangent construction method. Partial vapour pressure (Pv) is constrained to never exceed saturation pressure (Psat). Condensation interfaces are marked where the Pv tangent line touches the Psat curve. Surface condensation risk uses 80% RH mould growth limit (not 100% dew point).';
       const wrappedNote = wrapText(diagramNote, contentWidth, 7);
       pdf.text(wrappedNote, margin, y);
     }
