@@ -3,7 +3,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { Construction, ConstructionLayer, ClimateData, AnalysisResult } from '@/types/materials';
 import { ukMaterialDatabase } from '@/data/ukMaterials';
 import { ukMonthlyClimateData, getCityClimateData, ukCities, HumidityClass, reorderToOctSep } from '@/data/ukClimate';
-import { performCondensationAnalysis, calculateUValue, calculateUValueWithoutBridging, calculateGroundFloorUValue } from '@/utils/hygrothermalCalculations';
+import { performCondensationAnalysis, calculateUValue, calculateUValueWithoutBridging, calculateGroundFloorUValue, calculateVapourPressureGradient, calculateTemperatureGradient } from '@/utils/hygrothermalCalculations';
 import { ConstructionBuilder } from '@/components/ConstructionBuilder';
 import { ClimateInput } from '@/components/ClimateInput';
 import { JunctionCanvas, FloorType } from '@/components/JunctionCanvas';
@@ -921,9 +921,32 @@ export default function AnalysisWorkspace() {
         return baseColor;
       };
       
-      // Get vapour pressure data from result
-      const vpData = result.vapourPressureGradient;
-      const tempData = result.temperatureGradient;
+      // CRITICAL: Recalculate vapour pressure and temperature for the SELECTED month
+      // This ensures the Glaser diagram in PDF reflects the user's selected month
+      const monthIndex = [
+        'October', 'November', 'December', 'January', 'February', 'March',
+        'April', 'May', 'June', 'July', 'August', 'September'
+      ].indexOf(displayMonthForGlaser);
+      const selectedMonthClimate = climateData[monthIndex] || climateData[3]; // Default to January
+      
+      // Recalculate gradients for the selected month
+      const monthVpData = calculateVapourPressureGradient(
+        result.construction,
+        selectedMonthClimate.internalTemp,
+        selectedMonthClimate.internalRH,
+        selectedMonthClimate.externalTemp,
+        selectedMonthClimate.externalRH
+      );
+      
+      const monthTempData = calculateTemperatureGradient(
+        result.construction,
+        selectedMonthClimate.internalTemp,
+        selectedMonthClimate.externalTemp
+      );
+      
+      // Use month-specific data for the diagram
+      const vpData = monthVpData;
+      const tempData = monthTempData;
       
       if (vpData && vpData.length > 1) {
         // Calculate cumulative equivalent air thickness (Sd values)
@@ -951,6 +974,14 @@ export default function AnalysisWorkspace() {
         const tempMin = tempData ? Math.min(...tempData.map(t => t.temperature)) : 0;
         const tempMax = tempData ? Math.max(...tempData.map(t => t.temperature)) : 20;
         const tempRange = tempMax - tempMin || 1;
+        
+        // Calculate layer boundary positions for condensation marker validation
+        const layerBoundaryPositions: number[] = [0];
+        let boundaryPos = 0;
+        for (const layer of buildup.layers) {
+          boundaryPos += layer.thickness;
+          layerBoundaryPositions.push(boundaryPos);
+        }
         
         // Diagram layout - Two charts stacked: Temperature on top, Pressure below
         const tempDiagramHeight = 40;
@@ -1156,23 +1187,27 @@ export default function AnalysisWorkspace() {
         
         // Find condensation interfaces using ISO 13788 tangent construction
         // With tangent method, Pv never exceeds Psat - condensation occurs where they touch
+        // CRITICAL: Only mark at exact layer boundaries, not within layers
         const condensationPoints: {x: number, y: number}[] = [];
         
-        // Check for interfaces marked as condensation points
+        // Check for interfaces marked as condensation points AT LAYER BOUNDARIES
         for (let i = 0; i < vpData.length; i++) {
           const point = vpData[i];
           
-          // ISO 13788: Condensation interface is where Pv touches Psat exactly
-          // The vapourPressureGradient already has isCondensationInterface flag set
-          if ((point as any).isCondensationInterface) {
+          // Check if this point is at a layer boundary
+          const isAtBoundary = layerBoundaryPositions.some(bp => Math.abs(bp - point.position) < 0.5);
+          
+          // ISO 13788: Condensation interface is where Pv touches Psat exactly AT a layer boundary
+          if ((point as any).isCondensationInterface && isAtBoundary) {
             condensationPoints.push({
               x: scaleX(point.position),
               y: scaleY(point.pressure)
             });
           }
           
-          // Also check for near-equality (within 1 Pa tolerance)
-          if (Math.abs(point.pressure - point.saturation) <= 1 && 
+          // Also check for near-equality at boundaries (within 1 Pa tolerance)
+          if (isAtBoundary && 
+              Math.abs(point.pressure - point.saturation) <= 1 && 
               !condensationPoints.some(cp => Math.abs(cp.x - scaleX(point.position)) < 1)) {
             condensationPoints.push({
               x: scaleX(point.position),
