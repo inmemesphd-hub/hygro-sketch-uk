@@ -87,26 +87,26 @@ export function GlastaDiagram({
   }, []);
 
   // Find the worst month based on HIGHEST MONTHLY CONDENSATION (per ISO 13788)
-  // This should be the month where Pv exceeds Psat by the greatest amount
+  // This should be the month where the most condensation occurs (g/m²)
   const worstMonth = useMemo(() => {
-    let worstIdx = 0;
+    let worstMonthName = 'January';
     let maxCondensation = 0;
     
-    result.monthlyData.forEach((data, mIdx) => {
-      // Select month with highest monthly condensation amount
+    // Find the month with highest condensation by matching month names
+    result.monthlyData.forEach((data) => {
+      // Only consider months with actual condensation (not evaporation)
       if (data.condensationAmount > maxCondensation) {
         maxCondensation = data.condensationAmount;
-        worstIdx = mIdx;
+        worstMonthName = data.month;
       }
     });
     
     // If no condensation in any month, default to January (coldest typical UK month)
     if (maxCondensation === 0) {
-      const januaryIdx = months.indexOf('January');
-      return months[januaryIdx >= 0 ? januaryIdx : 0];
+      return 'January';
     }
     
-    return months[worstIdx] || 'January';
+    return worstMonthName;
   }, [result.monthlyData]);
 
   const displayMonth = currentMonth === 'worst' ? worstMonth : currentMonth;
@@ -143,8 +143,14 @@ export function GlastaDiagram({
     );
   }, [result.construction, displayMonth, climateData, result.vapourPressureGradient]);
 
+  // Check if condensation occurs this month (any uncapped Pv > Psat)
+  const hasCondensationThisMonth = useMemo(() => {
+    return monthSpecificGradient.some(point => (point as any).isCondensationInterface === true);
+  }, [monthSpecificGradient]);
+
   // Build chart data with temperature line and S_d values
-  // ISO 13788: P_v line uses tangent construction and never crosses P_sat
+  // ISO 13788: Show UNCAPPED Pv line to visually display where it crosses Psat
+  // The condensation point is where uncapped line exceeds saturation
   const chartData = useMemo(() => {
     const data: any[] = [];
     
@@ -178,23 +184,27 @@ export function GlastaDiagram({
       // Get temperature at this position from recalculated gradient
       const temperature = tempGradient[i]?.temperature ?? 0;
 
-      // ISO 13788 tangent construction: P_v is already capped at P_sat
-      // Check if this is a condensation interface (Pv = Psat at a layer boundary)
+      // Check if this is a condensation interface
       const isCondensationInterface = (point as any).isCondensationInterface || false;
       
       // Ensure condensation is only marked at exact layer boundaries
       const isAtBoundary = layerBoundaryPositions.some(bp => Math.abs(bp - point.position) < 0.1);
       
+      // Use UNCAPPED pressure for the Pv line when condensation occurs
+      // This shows the true intersection with Psat per ISO 13788 Glaser method
+      const uncappedPressure = (point as any).uncappedPressure ?? point.pressure;
+      
       data.push({
         position: point.position,
         sd: Math.round(cumulativeSd * 100) / 100, // S_d in metres
-        vapourPressure: Math.round(point.pressure),
+        // Show uncapped pressure to visualize intersection with Psat
+        vapourPressure: Math.round(uncappedPressure),
         saturationPressure: Math.round(point.saturation),
         temperature: Math.round(temperature * 10) / 10,
-        // Mark condensation interface ONLY at layer boundaries where P_v touches P_sat
+        // Mark condensation interface ONLY at layer boundaries where P_v exceeds P_sat
         isCondensationInterface: isCondensationInterface && isAtBoundary,
-        // For visual indicator only - no "condensation zone" shown since P_v never exceeds P_sat
-        condensation: 0,
+        // Flag for condensation zone styling
+        hasCondensation: uncappedPressure > point.saturation,
       });
     }
 

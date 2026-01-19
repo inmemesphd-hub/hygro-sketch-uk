@@ -499,7 +499,7 @@ export function calculateVapourPressureGradient(
   internalRH: number,
   externalTemp: number,
   externalRH: number
-): { position: number; pressure: number; saturation: number; isCondensationInterface?: boolean }[] {
+): { position: number; pressure: number; saturation: number; uncappedPressure: number; isCondensationInterface?: boolean }[] {
   const pInternal = calculateVapourPressure(internalTemp, internalRH);
   const pExternal = calculateVapourPressure(externalTemp, externalRH);
 
@@ -513,6 +513,7 @@ export function calculateVapourPressureGradient(
     temperature: number;
     pSat: number;
     layerIndex: number;
+    pUncapped: number;
   }
   
   const interfaces: InterfaceData[] = [];
@@ -526,7 +527,8 @@ export function calculateVapourPressureGradient(
     sdFromInternal: 0,
     temperature: internalSurfaceTemp,
     pSat: calculateSaturationPressure(internalSurfaceTemp),
-    layerIndex: -1
+    layerIndex: -1,
+    pUncapped: pInternal
   });
   
   for (let i = 0; i < construction.layers.length; i++) {
@@ -534,46 +536,43 @@ export function calculateVapourPressureGradient(
     runningSD += calculateSd(layer);
     runningPosition += layer.thickness;
     const temp = tempGradient[i + 1]?.temperature ?? externalTemp;
+    
     interfaces.push({ 
       position: runningPosition, 
       sdFromInternal: runningSD,
       temperature: temp,
       pSat: calculateSaturationPressure(temp),
-      layerIndex: i 
+      layerIndex: i,
+      pUncapped: 0 // Will calculate below
     });
   }
   
   const totalSd = runningSD;
   
+  // Calculate uncapped pressure at each interface (linear gradient)
+  for (let i = 0; i < interfaces.length; i++) {
+    const sdFraction = totalSd > 0 ? interfaces[i].sdFromInternal / totalSd : 0;
+    interfaces[i].pUncapped = pInternal - (pInternal - pExternal) * sdFraction;
+  }
+  
   // Implement tangent construction algorithm
   // Start from internal, find if/where P_v would exceed P_sat
-  const result: { position: number; pressure: number; saturation: number; isCondensationInterface?: boolean }[] = [];
+  const result: { position: number; pressure: number; saturation: number; uncappedPressure: number; isCondensationInterface?: boolean }[] = [];
   
   // Initial uncapped line: linear from pInternal to pExternal based on S_d
   // Check if this line crosses any P_sat curve
   let condensationInterfaceIdx = -1;
+  let maxExcess = 0;
   
   for (let i = 1; i < interfaces.length - 1; i++) {
     const iface = interfaces[i];
-    const sdFraction = iface.sdFromInternal / totalSd;
-    const pUncapped = pInternal - (pInternal - pExternal) * sdFraction;
     
-    // If uncapped pressure exceeds saturation, we need a tangent
-    if (pUncapped > iface.pSat) {
-      // Find the interface with the steepest required slope (tangent point)
-      // Tangent from internal: slope = (pInternal - pSat) / sdToInterface
-      // We want the tangent that just touches (minimum slope to stay below P_sat)
-      const slopeToTouch = (pInternal - iface.pSat) / iface.sdFromInternal;
-      
-      if (condensationInterfaceIdx === -1) {
+    // If uncapped pressure exceeds saturation, condensation occurs
+    if (iface.pUncapped > iface.pSat) {
+      const excess = iface.pUncapped - iface.pSat;
+      if (excess > maxExcess) {
+        maxExcess = excess;
         condensationInterfaceIdx = i;
-      } else {
-        // Check if this interface requires a shallower tangent (closer to P_sat)
-        const prevIface = interfaces[condensationInterfaceIdx];
-        const prevSlope = (pInternal - prevIface.pSat) / prevIface.sdFromInternal;
-        if (slopeToTouch < prevSlope) {
-          condensationInterfaceIdx = i;
-        }
       }
     }
   }
@@ -583,13 +582,12 @@ export function calculateVapourPressureGradient(
     // No condensation - straight line from internal to external
     for (let i = 0; i < interfaces.length; i++) {
       const iface = interfaces[i];
-      const sdFraction = totalSd > 0 ? iface.sdFromInternal / totalSd : 0;
-      const pressure = pInternal - (pInternal - pExternal) * sdFraction;
       
       result.push({
         position: iface.position,
-        pressure: Math.round(pressure),
+        pressure: Math.round(iface.pUncapped),
         saturation: Math.round(iface.pSat),
+        uncappedPressure: Math.round(iface.pUncapped),
         isCondensationInterface: false
       });
     }
@@ -633,6 +631,7 @@ export function calculateVapourPressureGradient(
         position: iface.position,
         pressure: Math.round(pressure),
         saturation: Math.round(iface.pSat),
+        uncappedPressure: Math.round(iface.pUncapped),
         isCondensationInterface: i === condensationInterfaceIdx
       });
     }
