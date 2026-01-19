@@ -370,10 +370,10 @@ export function GlastaDiagram({
               <Tooltip content={<CustomTooltip />} />
               <Legend wrapperStyle={{ fontSize: '12px', paddingTop: '10px' }} />
               
-              {/* Temperature line (green) - stepAfter for horizontal-then-vertical */}
+              {/* Temperature line (green) - linear for gradient visualization */}
               <Line
                 yAxisId="temperature"
-                type="stepAfter"
+                type="linear"
                 dataKey="temperature"
                 name="Temperature (°C)"
                 stroke="#22c55e"
@@ -381,10 +381,10 @@ export function GlastaDiagram({
                 dot={{ fill: '#22c55e', r: 3 }}
               />
               
-              {/* Saturation pressure line (blue) - stepAfter for layer boundaries */}
+              {/* Saturation pressure line (blue) - linear for smooth curve */}
               <Line
                 yAxisId="pressure"
-                type="stepAfter"
+                type="linear"
                 dataKey="saturationPressure"
                 name="Saturated VP (Pa)"
                 stroke="#3b82f6"
@@ -392,10 +392,10 @@ export function GlastaDiagram({
                 dot={{ fill: '#3b82f6', r: 3 }}
               />
               
-              {/* Actual vapour pressure line (red) - stepAfter for layer boundaries */}
+              {/* Actual vapour pressure line (red) - linear to show intersection with Psat */}
               <Line
                 yAxisId="pressure"
-                type="stepAfter"
+                type="linear"
                 dataKey="vapourPressure"
                 name="Partial VP (Pa)"
                 stroke="#ef4444"
