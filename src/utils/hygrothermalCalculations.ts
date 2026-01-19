@@ -555,49 +555,29 @@ export function calculateVapourPressureGradient(
     interfaces[i].pUncapped = pInternal - (pInternal - pExternal) * sdFraction;
   }
   
-  // ISO 13788 Glaser Method: Find condensation interface using tangent construction
-  // The condensation plane is where the tangent from internal Pv to the Psat curve touches
-  // This is the interface with the SMALLEST slope (Pint - Psat) / Sd_to_interface
-  let condensationInterfaceIdx = -1;
-  let minSlope = Infinity;
+  // Implement tangent construction algorithm
+  // Start from internal, find if/where P_v would exceed P_sat
+  const result: { position: number; pressure: number; saturation: number; uncappedPressure: number; isCondensationInterface?: boolean }[] = [];
   
-  // Check ALL internal interfaces (where condensation can physically occur)
-  for (let i = 1; i < interfaces.length; i++) {
+  // Initial uncapped line: linear from pInternal to pExternal based on S_d
+  // Check if this line crosses any P_sat curve
+  let condensationInterfaceIdx = -1;
+  let maxExcess = 0;
+  
+  for (let i = 1; i < interfaces.length - 1; i++) {
     const iface = interfaces[i];
     
-    if (iface.sdFromInternal > 0) {
-      // Slope of tangent from internal to this interface's Psat
-      const slopeToTouchPsat = (pInternal - iface.pSat) / iface.sdFromInternal;
-      
-      // The tangent construction: if the UNCAPPED line would exceed Psat at any interface,
-      // we need to find the tangent point. The tangent touches at the interface where
-      // the slope is smallest (i.e., the line just touches Psat without crossing)
-      if (iface.pUncapped > iface.pSat) {
-        // This interface has Pv > Psat, condensation definitely occurs
-        // Find the tangent point (smallest slope)
-        if (slopeToTouchPsat < minSlope) {
-          minSlope = slopeToTouchPsat;
-          condensationInterfaceIdx = i;
-        }
-      } else if (condensationInterfaceIdx === -1) {
-        // Even if Pv <= Psat at interfaces, check if line crosses between interfaces
-        // by comparing if any previous interface had Pv > Psat situation
-        const prevIface = interfaces[i - 1];
-        // Check if line segment from prev to current crosses Psat
-        if (prevIface.pUncapped > prevIface.pSat && iface.pUncapped <= iface.pSat) {
-          // Crossing happened between these interfaces - condensation at previous
-          if ((pInternal - prevIface.pSat) / prevIface.sdFromInternal < minSlope) {
-            minSlope = (pInternal - prevIface.pSat) / prevIface.sdFromInternal;
-            condensationInterfaceIdx = i - 1;
-          }
-        }
+    // If uncapped pressure exceeds saturation, condensation occurs
+    if (iface.pUncapped > iface.pSat) {
+      const excess = iface.pUncapped - iface.pSat;
+      if (excess > maxExcess) {
+        maxExcess = excess;
+        condensationInterfaceIdx = i;
       }
     }
   }
   
-  // Build the final P_v line with both capped and uncapped values
-  const result: { position: number; pressure: number; saturation: number; uncappedPressure: number; isCondensationInterface?: boolean }[] = [];
-  
+  // Build the final P_v line
   if (condensationInterfaceIdx === -1) {
     // No condensation - straight line from internal to external
     for (let i = 0; i < interfaces.length; i++) {
@@ -615,12 +595,16 @@ export function calculateVapourPressureGradient(
     // Condensation at interface - construct tangent lines
     const condIface = interfaces[condensationInterfaceIdx];
     
+    // From internal to condensation point: tangent touching P_sat at condensation interface
+    // From condensation point to external: tangent from P_sat to external P_v
+    
     for (let i = 0; i < interfaces.length; i++) {
       const iface = interfaces[i];
       let pressure: number;
       
       if (i <= condensationInterfaceIdx) {
         // Tangent from internal to condensation point
+        // P_v decreases linearly from pInternal to P_sat at condensation interface
         if (condIface.sdFromInternal > 0) {
           const fractionToCondPoint = iface.sdFromInternal / condIface.sdFromInternal;
           pressure = pInternal - (pInternal - condIface.pSat) * fractionToCondPoint;
@@ -629,6 +613,7 @@ export function calculateVapourPressureGradient(
         }
       } else {
         // Tangent from condensation point to external
+        // P_v decreases linearly from P_sat at condensation interface to pExternal
         const sdFromCondPoint = iface.sdFromInternal - condIface.sdFromInternal;
         const sdCondToExternal = totalSd - condIface.sdFromInternal;
         if (sdCondToExternal > 0) {
@@ -639,7 +624,7 @@ export function calculateVapourPressureGradient(
         }
       }
       
-      // Cap at saturation (P_v can never exceed P_sat per ISO 13788)
+      // Cap at saturation (P_v can never exceed P_sat)
       pressure = Math.min(pressure, iface.pSat);
       
       result.push({
@@ -742,51 +727,28 @@ export function calculateMonthlyAnalysis(
       pSatAtInterfaces.push(calculateSaturationPressure(temp));
     }
 
-    // ISO 13788 Glaser Method: Find condensation interface using tangent construction
-    // Same logic as calculateVapourPressureGradient for consistency
-    // The condensation plane is where the tangent from internal Pv to Psat curve touches
+    // ISO 13788 CRITICAL FIX: Each month INDEPENDENTLY checks if Pv > Psat
+    // Condensation only occurs when the uncapped vapour pressure line exceeds saturation
+    // This ensures table matches Glaser diagram (no Pv/Psat intersection = no condensation)
     let condensationInterfaceThisMonth = -1;
-    let minSlope = Infinity;
+    let maxExcess = 0;
     
-    // Calculate uncapped pressure at each interface
-    const pUncappedAtInterfaces: number[] = [];
-    for (let i = 0; i < interfaces.length; i++) {
-      const sdFraction = totalSd > 0 ? interfaces[i].sdFromInternal / totalSd : 0;
-      pUncappedAtInterfaces.push(pInternal - (pInternal - pExternal) * sdFraction);
-    }
-    
-    // Check ALL internal interfaces (where condensation can physically occur)
-    for (let i = 1; i < interfaces.length; i++) {
+    // Check each internal interface (between layers, not at surfaces)
+    for (let i = 1; i < interfaces.length - 1; i++) {
       const iface = interfaces[i];
       const pSat = pSatAtInterfaces[i];
-      const pUncapped = pUncappedAtInterfaces[i];
       
-      if (iface.sdFromInternal > 0) {
-        // Slope of tangent from internal to this interface's Psat
-        const slopeToTouchPsat = (pInternal - pSat) / iface.sdFromInternal;
-        
-        // If uncapped line exceeds Psat, condensation occurs
-        if (pUncapped > pSat) {
-          // Find the tangent point (smallest slope)
-          if (slopeToTouchPsat < minSlope) {
-            minSlope = slopeToTouchPsat;
-            condensationInterfaceThisMonth = i;
-          }
-        } else if (condensationInterfaceThisMonth === -1 && i > 1) {
-          // Check if line crosses between interfaces
-          const prevPUncapped = pUncappedAtInterfaces[i - 1];
-          const prevPSat = pSatAtInterfaces[i - 1];
-          if (prevPUncapped > prevPSat && pUncapped <= pSat) {
-            // Crossing happened - condensation at previous interface
-            const prevIface = interfaces[i - 1];
-            if (prevIface.sdFromInternal > 0) {
-              const prevSlope = (pInternal - prevPSat) / prevIface.sdFromInternal;
-              if (prevSlope < minSlope) {
-                minSlope = prevSlope;
-                condensationInterfaceThisMonth = i - 1;
-              }
-            }
-          }
+      // Calculate uncapped vapour pressure at this interface
+      // Linear interpolation based on S_d fraction
+      const sdFraction = iface.sdFromInternal / totalSd;
+      const pUncapped = pInternal - (pInternal - pExternal) * sdFraction;
+      
+      // Condensation occurs ONLY where P_v would exceed P_sat
+      if (pUncapped > pSat) {
+        const excess = pUncapped - pSat;
+        if (excess > maxExcess) {
+          maxExcess = excess;
+          condensationInterfaceThisMonth = i;
         }
       }
     }
