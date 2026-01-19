@@ -728,10 +728,10 @@ export function calculateMonthlyAnalysis(
       pSatAtInterfaces.push(calculateSaturationPressure(temp));
     }
 
-    // Find condensation plane using tangent construction
-    // The uncapped vapour pressure line from internal to external
-    // Condensation occurs where this line exceeds saturation pressure
-    let condensationInterface = -1;
+    // ISO 13788 CRITICAL FIX: Each month INDEPENDENTLY checks if Pv > Psat
+    // Condensation only occurs when the uncapped vapour pressure line exceeds saturation
+    // This ensures table matches Glaser diagram (no Pv/Psat intersection = no condensation)
+    let condensationInterfaceThisMonth = -1;
     let maxExcess = 0;
     
     // Check each internal interface (between layers, not at surfaces)
@@ -744,88 +744,83 @@ export function calculateMonthlyAnalysis(
       const sdFraction = iface.sdFromInternal / totalSd;
       const pUncapped = pInternal - (pInternal - pExternal) * sdFraction;
       
-      // Condensation occurs where P_v would exceed P_sat
+      // Condensation occurs ONLY where P_v would exceed P_sat
       if (pUncapped > pSat) {
         const excess = pUncapped - pSat;
         if (excess > maxExcess) {
           maxExcess = excess;
-          condensationInterface = i;
+          condensationInterfaceThisMonth = i;
         }
       }
-    }
-    
-    // If we found a new condensation interface, update tracking
-    if (condensationInterface > 0) {
-      primaryCondensationInterface = condensationInterface;
     }
     
     // Calculate condensation or evaporation
     let monthlyCondensation = 0;
     let monthlyEvaporation = 0;
     
-    if (primaryCondensationInterface > 0) {
+    // CASE 1: Condensation occurs THIS month (Pv > Psat at some interface)
+    if (condensationInterfaceThisMonth > 0) {
+      // Update primary condensation interface for tracking accumulated moisture
+      primaryCondensationInterface = condensationInterfaceThisMonth;
+      
+      const iface = interfaces[condensationInterfaceThisMonth];
+      const sdToInterface = iface.sdFromInternal;
+      const sdFromInterface = totalSd - sdToInterface;
+      const pSatAtInterface = pSatAtInterfaces[condensationInterfaceThisMonth];
+      
+      // g_in = vapour flux arriving at interface from inside
+      const gIn = sdToInterface > 0 
+        ? (DELTA_0 * (pInternal - pSatAtInterface)) / sdToInterface
+        : 0;
+      
+      // g_out = vapour flux leaving interface to outside
+      const gOut = sdFromInterface > 0 
+        ? (DELTA_0 * (pSatAtInterface - pExternal)) / sdFromInterface
+        : 0;
+      
+      // Net = gIn - gOut (positive = accumulation)
+      const gNet = gIn - gOut;
+      const monthlyFlowGrams = gNet * SECONDS_PER_MONTH * 1000;
+      
+      if (monthlyFlowGrams > 0) {
+        monthlyCondensation = monthlyFlowGrams;
+      } else {
+        // Net evaporation even during condensation conditions
+        monthlyEvaporation = Math.min(Math.abs(monthlyFlowGrams), cumulativeAccumulation);
+      }
+    }
+    // CASE 2: No condensation this month, but there's accumulated moisture to evaporate
+    else if (cumulativeAccumulation > 0.01 && primaryCondensationInterface > 0) {
+      // Moisture exists from previous months - check for evaporation
+      // The moisture acts as a vapour source at Psat at the stored interface
       const iface = interfaces[primaryCondensationInterface];
       const sdToInterface = iface.sdFromInternal;
       const sdFromInterface = totalSd - sdToInterface;
       const pSatAtInterface = pSatAtInterfaces[primaryCondensationInterface];
       
-      // If there's accumulated moisture, the interface acts as a vapour source at P_sat
-      // If no moisture, only condense if vapour pressure would exceed saturation
+      // Flow from internal side (positive if internal P > P_sat means condensing, negative means evaporating inward)
+      const gIn = sdToInterface > 0 
+        ? (DELTA_0 * (pInternal - pSatAtInterface)) / sdToInterface
+        : 0;
       
-      if (accumulatedMoistureAtInterface > 0 || cumulativeAccumulation > 0) {
-        // There's moisture at the interface - it acts as vapour source at P_sat
-        
-        // Flow from internal side: positive if internal P > P_sat (condensing)
-        //                          negative if internal P < P_sat (evaporating to inside)
-        const gIn = sdToInterface > 0 
-          ? (DELTA_0 * (pInternal - pSatAtInterface)) / sdToInterface
-          : 0;
-        
-        // Flow to external side: positive if P_sat > external P (evaporating to outside)
-        const gOut = sdFromInterface > 0 
-          ? (DELTA_0 * (pSatAtInterface - pExternal)) / sdFromInterface
-          : 0;
-        
-        // Net flow at interface: 
-        // positive gIn = moisture arriving from inside
-        // positive gOut = moisture leaving to outside
-        // Net = gIn - gOut (positive = accumulation, negative = drying)
-        const gNet = gIn - gOut;
-        const monthlyFlowGrams = gNet * SECONDS_PER_MONTH * 1000;
-        
-        if (monthlyFlowGrams > 0) {
-          // Net condensation
-          monthlyCondensation = monthlyFlowGrams;
-        } else {
-          // Net evaporation (gOut > gIn, moisture is drying out)
-          // Evaporation cannot exceed accumulated moisture
-          monthlyEvaporation = Math.min(Math.abs(monthlyFlowGrams), cumulativeAccumulation);
-        }
-      } else {
-        // No existing moisture - check if condensation would start
-        // Calculate what vapour pressure would be at the interface
-        const sdFraction = sdToInterface / totalSd;
-        const pAtInterface = pInternal - (pInternal - pExternal) * sdFraction;
-        
-        if (pAtInterface > pSatAtInterface) {
-          // Condensation will occur
-          // g_in = vapour flux arriving at interface
-          const gIn = sdToInterface > 0 
-            ? (DELTA_0 * (pInternal - pSatAtInterface)) / sdToInterface
-            : 0;
-          
-          // g_out = vapour flux leaving the interface  
-          const gOut = sdFromInterface > 0 
-            ? (DELTA_0 * (pSatAtInterface - pExternal)) / sdFromInterface
-            : 0;
-          
-          const gNet = gIn - gOut;
-          if (gNet > 0) {
-            monthlyCondensation = gNet * SECONDS_PER_MONTH * 1000;
-          }
-        }
+      // Flow to external side (positive if P_sat > external P means evaporating outward)
+      const gOut = sdFromInterface > 0 
+        ? (DELTA_0 * (pSatAtInterface - pExternal)) / sdFromInterface
+        : 0;
+      
+      // Net = gIn - gOut
+      const gNet = gIn - gOut;
+      const monthlyFlowGrams = gNet * SECONDS_PER_MONTH * 1000;
+      
+      if (monthlyFlowGrams < 0) {
+        // Net evaporation (moisture leaving)
+        monthlyEvaporation = Math.min(Math.abs(monthlyFlowGrams), cumulativeAccumulation);
       }
+      // Note: We do NOT add new condensation here because Pv doesn't exceed Psat this month
+      // This aligns the table with the Glaser diagram which shows no intersection
     }
+    // CASE 3: No condensation and no accumulated moisture - nothing happens
+    // monthlyCondensation and monthlyEvaporation remain 0
     
     // Calculate net change
     const netAccumulation = monthlyCondensation - monthlyEvaporation;
