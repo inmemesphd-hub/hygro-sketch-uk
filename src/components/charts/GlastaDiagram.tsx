@@ -86,20 +86,28 @@ export function GlastaDiagram({
     };
   }, []);
 
-  // Find the worst month (closest to or at condensation)
+  // Find the worst month based on HIGHEST MONTHLY CONDENSATION (per ISO 13788)
+  // This should be the month where Pv exceeds Psat by the greatest amount
   const worstMonth = useMemo(() => {
     let worstIdx = 0;
-    let worstRatio = 0;
+    let maxCondensation = 0;
     
     result.monthlyData.forEach((data, mIdx) => {
-      if (data.condensationAmount > 0 || data.cumulativeAccumulation > worstRatio) {
-        worstRatio = data.cumulativeAccumulation;
+      // Select month with highest monthly condensation amount
+      if (data.condensationAmount > maxCondensation) {
+        maxCondensation = data.condensationAmount;
         worstIdx = mIdx;
       }
     });
     
+    // If no condensation in any month, default to January (coldest typical UK month)
+    if (maxCondensation === 0) {
+      const januaryIdx = months.indexOf('January');
+      return months[januaryIdx >= 0 ? januaryIdx : 0];
+    }
+    
     return months[worstIdx] || 'January';
-  }, [result]);
+  }, [result.monthlyData]);
 
   const displayMonth = currentMonth === 'worst' ? worstMonth : currentMonth;
 
