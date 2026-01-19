@@ -866,10 +866,12 @@ export default function AnalysisWorkspace() {
         isWorstMonth = true;
         let worstCondensation = 0;
         displayMonthForGlaser = 'January';
-        result.monthlyData.forEach((data, idx) => {
+        // Find the month with highest MONTHLY condensation (per ISO 13788)
+        // Use data.month directly - not climateData index which may be misaligned
+        result.monthlyData.forEach((data) => {
           if (data.condensationAmount > worstCondensation) {
             worstCondensation = data.condensationAmount;
-            displayMonthForGlaser = climateData[idx]?.month || 'January';
+            displayMonthForGlaser = data.month;
           }
         });
       }
@@ -966,8 +968,9 @@ export default function AnalysisWorkspace() {
         
         const maxSd = cumulativeSd || 1;
         const maxPosition = vpData[vpData.length - 1].position;
-        const maxPressure = Math.max(...vpData.map(p => Math.max(p.pressure, p.saturation)));
-        const minPressure = Math.min(...vpData.map(p => Math.min(p.pressure, p.saturation)));
+        // Include uncapped pressure in range calculation to show intersection
+        const maxPressure = Math.max(...vpData.map(p => Math.max((p as any).uncappedPressure ?? p.pressure, p.saturation)));
+        const minPressure = Math.min(...vpData.map(p => Math.min((p as any).uncappedPressure ?? p.pressure, p.saturation)));
         const pressureRange = maxPressure - minPressure || 1;
         
         // Temperature data range
@@ -1168,51 +1171,53 @@ export default function AnalysisWorkspace() {
           pdf.line(scaleX(vpData[vpData.length - 1].position), scaleY(vpData[vpData.length - 1].saturation), diagramX, scaleY(vpData[vpData.length - 1].saturation));
         }
         
-        // Draw vapour pressure line (red) - ensure full coverage
+        // Draw vapour pressure line (red) - using UNCAPPED pressure per ISO 13788
+        // This shows where Pv line crosses Psat, indicating condensation interfaces
         pdf.setDrawColor(239, 68, 68);
         pdf.setLineWidth(1);
         for (let i = 1; i < vpData.length; i++) {
+          const prevUncapped = (vpData[i-1] as any).uncappedPressure ?? vpData[i-1].pressure;
+          const currUncapped = (vpData[i] as any).uncappedPressure ?? vpData[i].pressure;
           pdf.line(
-            scaleX(vpData[i-1].position), scaleY(vpData[i-1].pressure),
-            scaleX(vpData[i].position), scaleY(vpData[i].pressure)
+            scaleX(vpData[i-1].position), scaleY(prevUncapped),
+            scaleX(vpData[i].position), scaleY(currUncapped)
           );
         }
         // Extend to diagram edges
+        const firstUncapped = (vpData[0] as any).uncappedPressure ?? vpData[0].pressure;
+        const lastUncapped = (vpData[vpData.length - 1] as any).uncappedPressure ?? vpData[vpData.length - 1].pressure;
         if (vpData[0].position > 0) {
-          pdf.line(diagramX + diagramWidth, scaleY(vpData[0].pressure), scaleX(vpData[0].position), scaleY(vpData[0].pressure));
+          pdf.line(diagramX + diagramWidth, scaleY(firstUncapped), scaleX(vpData[0].position), scaleY(firstUncapped));
         }
         if (vpData[vpData.length - 1].position < maxPosition) {
-          pdf.line(scaleX(vpData[vpData.length - 1].position), scaleY(vpData[vpData.length - 1].pressure), diagramX, scaleY(vpData[vpData.length - 1].pressure));
+          pdf.line(scaleX(vpData[vpData.length - 1].position), scaleY(lastUncapped), diagramX, scaleY(lastUncapped));
         }
         
         // Find condensation interfaces using ISO 13788 tangent construction
-        // With tangent method, Pv never exceeds Psat - condensation occurs where they touch
+        // Condensation occurs where UNCAPPED Pv exceeds Psat at layer boundaries
         // CRITICAL: Only mark at exact layer boundaries, not within layers
         const condensationPoints: {x: number, y: number}[] = [];
         
-        // Check for interfaces marked as condensation points AT LAYER BOUNDARIES
+        // Check for interfaces where uncapped Pv exceeds Psat AT LAYER BOUNDARIES
         for (let i = 0; i < vpData.length; i++) {
           const point = vpData[i];
+          const uncappedPressure = (point as any).uncappedPressure ?? point.pressure;
           
           // Check if this point is at a layer boundary
           const isAtBoundary = layerBoundaryPositions.some(bp => Math.abs(bp - point.position) < 0.5);
           
-          // ISO 13788: Condensation interface is where Pv touches Psat exactly AT a layer boundary
-          if ((point as any).isCondensationInterface && isAtBoundary) {
-            condensationPoints.push({
-              x: scaleX(point.position),
-              y: scaleY(point.pressure)
-            });
-          }
-          
-          // Also check for near-equality at boundaries (within 1 Pa tolerance)
-          if (isAtBoundary && 
-              Math.abs(point.pressure - point.saturation) <= 1 && 
-              !condensationPoints.some(cp => Math.abs(cp.x - scaleX(point.position)) < 1)) {
-            condensationPoints.push({
-              x: scaleX(point.position),
-              y: scaleY(point.pressure)
-            });
+          // ISO 13788: Condensation occurs where uncapped Pv >= Psat at a layer boundary
+          // Mark the condensation interface where the lines intersect (at saturation pressure)
+          if (isAtBoundary && uncappedPressure >= point.saturation - 1) {
+            // Only add if not already added (avoid duplicates)
+            const scaledX = scaleX(point.position);
+            if (!condensationPoints.some(cp => Math.abs(cp.x - scaledX) < 1)) {
+              // Position marker at saturation pressure (where lines meet)
+              condensationPoints.push({
+                x: scaledX,
+                y: scaleY(point.saturation)
+              });
+            }
           }
         }
         
