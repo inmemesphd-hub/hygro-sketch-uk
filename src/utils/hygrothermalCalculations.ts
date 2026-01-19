@@ -578,6 +578,10 @@ export function calculateVapourPressureGradient(
   }
   
   // Build the final P_v line
+  // CRITICAL ISO 13788: uncappedPressure MUST always be the TRUE linear gradient
+  // from internal to external, regardless of whether condensation occurs.
+  // This is what we display on the Glaser diagram to show where Pv crosses Psat.
+  
   if (condensationInterfaceIdx === -1) {
     // No condensation - straight line from internal to external
     for (let i = 0; i < interfaces.length; i++) {
@@ -587,50 +591,50 @@ export function calculateVapourPressureGradient(
         position: iface.position,
         pressure: Math.round(iface.pUncapped),
         saturation: Math.round(iface.pSat),
+        // TRUE linear gradient - never modified by tangent construction
         uncappedPressure: Math.round(iface.pUncapped),
         isCondensationInterface: false
       });
     }
   } else {
-    // Condensation at interface - construct tangent lines
+    // Condensation at interface - construct tangent lines for the CAPPED pressure
+    // BUT preserve the TRUE uncapped linear gradient for visualization
     const condIface = interfaces[condensationInterfaceIdx];
-    
-    // From internal to condensation point: tangent touching P_sat at condensation interface
-    // From condensation point to external: tangent from P_sat to external P_v
     
     for (let i = 0; i < interfaces.length; i++) {
       const iface = interfaces[i];
-      let pressure: number;
+      let cappedPressure: number;
       
       if (i <= condensationInterfaceIdx) {
         // Tangent from internal to condensation point
-        // P_v decreases linearly from pInternal to P_sat at condensation interface
         if (condIface.sdFromInternal > 0) {
           const fractionToCondPoint = iface.sdFromInternal / condIface.sdFromInternal;
-          pressure = pInternal - (pInternal - condIface.pSat) * fractionToCondPoint;
+          cappedPressure = pInternal - (pInternal - condIface.pSat) * fractionToCondPoint;
         } else {
-          pressure = pInternal;
+          cappedPressure = pInternal;
         }
       } else {
         // Tangent from condensation point to external
-        // P_v decreases linearly from P_sat at condensation interface to pExternal
         const sdFromCondPoint = iface.sdFromInternal - condIface.sdFromInternal;
         const sdCondToExternal = totalSd - condIface.sdFromInternal;
         if (sdCondToExternal > 0) {
           const fractionFromCondPoint = sdFromCondPoint / sdCondToExternal;
-          pressure = condIface.pSat - (condIface.pSat - pExternal) * fractionFromCondPoint;
+          cappedPressure = condIface.pSat - (condIface.pSat - pExternal) * fractionFromCondPoint;
         } else {
-          pressure = pExternal;
+          cappedPressure = pExternal;
         }
       }
       
-      // Cap at saturation (P_v can never exceed P_sat)
-      pressure = Math.min(pressure, iface.pSat);
+      // Cap at saturation (P_v can never exceed P_sat in tangent construction)
+      cappedPressure = Math.min(cappedPressure, iface.pSat);
       
       result.push({
         position: iface.position,
-        pressure: Math.round(pressure),
+        // Capped pressure follows tangent construction
+        pressure: Math.round(cappedPressure),
         saturation: Math.round(iface.pSat),
+        // CRITICAL: uncappedPressure is the TRUE linear gradient from iface.pUncapped
+        // This shows where the theoretical Pv line would cross Psat
         uncappedPressure: Math.round(iface.pUncapped),
         isCondensationInterface: i === condensationInterfaceIdx
       });
