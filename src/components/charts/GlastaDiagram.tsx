@@ -125,13 +125,17 @@ export function GlastaDiagram({
   // CRITICAL: Recalculate vapour pressure gradient for the SELECTED month
   // This ensures the Glaser diagram updates based on the month's climate data
   const monthSpecificGradient = useMemo(() => {
-    const monthIndex = months.indexOf(displayMonth);
-    const monthClimate = climateData?.[monthIndex];
+    // Find the climate data for this month by matching the month NAME, not index
+    // because climateData might be in Oct-Sep order (reordered) or Jan-Dec order
+    const monthClimate = climateData?.find(c => c.month === displayMonth);
     
     if (!monthClimate) {
       // Fallback to result's pre-calculated gradient if no climate data
+      console.warn(`[Glaser] No climate data found for ${displayMonth}, using pre-calculated gradient`);
       return result.vapourPressureGradient;
     }
+    
+    console.log(`[Glaser ${displayMonth}] Climate: Int=${monthClimate.internalTemp}°C/${monthClimate.internalRH}%, Ext=${monthClimate.externalTemp}°C/${monthClimate.externalRH}%`);
     
     // Recalculate the vapour pressure gradient for this specific month
     return calculateVapourPressureGradient(
@@ -151,12 +155,13 @@ export function GlastaDiagram({
   // Build chart data with temperature line and S_d values
   // ISO 13788: Show UNCAPPED Pv line to visually display where it crosses Psat
   // The condensation point is where uncapped line exceeds saturation
+  // ISO 13788 Glaser Diagram: The chart MUST show the theoretical linear Pv gradient
+  // crossing ABOVE Psat when condensation occurs. This is the visual proof of condensation risk.
   const chartData = useMemo(() => {
     const data: any[] = [];
     
-    // Get the climate data for the selected month for temperature gradient
-    const monthIndex = months.indexOf(displayMonth);
-    const monthClimate = climateData?.[monthIndex] || {
+    // Find the climate data for this month by matching the month NAME
+    const monthClimate = climateData?.find(c => c.month === displayMonth) || {
       internalTemp: 20,
       externalTemp: 5,
       internalRH: 60,
@@ -171,6 +176,9 @@ export function GlastaDiagram({
     );
 
     let cumulativeSd = 0;
+    
+    // DEBUG: Log the pressure values to verify intersection
+    console.log(`[Glaser ${displayMonth}] Checking pressure intersections:`);
     
     for (let i = 0; i < monthSpecificGradient.length; i++) {
       const point = monthSpecificGradient[i];
@@ -190,22 +198,37 @@ export function GlastaDiagram({
       // Ensure condensation is only marked at exact layer boundaries
       const isAtBoundary = layerBoundaryPositions.some(bp => Math.abs(bp - point.position) < 0.1);
       
-      // Use UNCAPPED pressure for the Pv line when condensation occurs
-      // This shows the true intersection with Psat per ISO 13788 Glaser method
+      // CRITICAL: Use the TRUE uncapped linear gradient pressure
+      // This is the theoretical Pv line that must cross Psat when condensation occurs
       const uncappedPressure = (point as any).uncappedPressure ?? point.pressure;
+      const saturationPressure = point.saturation;
+      
+      // Log where condensation should occur
+      if (uncappedPressure > saturationPressure) {
+        console.log(`  [Interface ${i}] Pv=${uncappedPressure}Pa > Psat=${saturationPressure}Pa at ${point.position}mm - CONDENSATION`);
+      }
       
       data.push({
         position: point.position,
         sd: Math.round(cumulativeSd * 100) / 100, // S_d in metres
-        // Show uncapped pressure to visualize intersection with Psat
+        // CRITICAL: Plot the UNCAPPED theoretical linear gradient
+        // This MUST exceed Psat at condensation interfaces
         vapourPressure: Math.round(uncappedPressure),
-        saturationPressure: Math.round(point.saturation),
+        saturationPressure: Math.round(saturationPressure),
         temperature: Math.round(temperature * 10) / 10,
         // Mark condensation interface ONLY at layer boundaries where P_v exceeds P_sat
         isCondensationInterface: isCondensationInterface && isAtBoundary,
         // Flag for condensation zone styling
-        hasCondensation: uncappedPressure > point.saturation,
+        hasCondensation: uncappedPressure > saturationPressure,
       });
+    }
+    
+    // Verify that if condensation is marked, Pv > Psat at that point
+    const condensationPoints = data.filter(d => d.isCondensationInterface);
+    if (condensationPoints.length > 0) {
+      console.log(`[Glaser ${displayMonth}] Condensation interfaces:`, condensationPoints.map(p => 
+        `pos=${p.position}mm, Pv=${p.vapourPressure}Pa, Psat=${p.saturationPressure}Pa, exceeds=${p.vapourPressure > p.saturationPressure}`
+      ));
     }
 
     return data;
