@@ -1,9 +1,16 @@
-import { useMemo, useState, useRef, useEffect, useCallback } from 'react';
-import { AnalysisResult, ClimateData, ConstructionLayer } from '@/types/materials';
-import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ComposedChart, Area, ReferenceLine } from 'recharts';
+import { useMemo, useState, useRef, useEffect } from 'react';
+import { AnalysisResult, ClimateData } from '@/types/materials';
+import { ComposedChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ReferenceLine, ResponsiveContainer } from 'recharts';
 import { cn } from '@/lib/utils';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { calculateSd, calculateVapourPressureGradient, calculateTemperatureGradient } from '@/utils/hygrothermalCalculations';
+import {
+  calculateSaturationPressure,
+  calculateVapourPressure,
+  calculateTemperatureGradient,
+  calculateSd,
+} from '@/utils/hygrothermalCalculations';
+
+// ─── Types ───────────────────────────────────────────────────────────────────
 
 interface GlastaDiagramProps {
   result: AnalysisResult;
@@ -16,296 +23,212 @@ interface GlastaDiagramProps {
   onXAxisModeChange?: (mode: 'thickness' | 'sd') => void;
 }
 
-// October to September order for UK heating season
-const months = [
+interface ChartPoint {
+  position: number;   // mm from internal surface
+  sd: number;         // cumulative Sd (m)
+  pv: number;         // partial vapour pressure (Pa) — raw linear, may exceed psat
+  psat: number;       // saturation vapour pressure (Pa)
+  temperature: number;
+  isCondensationInterface: boolean;
+}
+
+// ─── Constants ────────────────────────────────────────────────────────────────
+
+const MONTHS = [
   'October', 'November', 'December', 'January', 'February', 'March',
   'April', 'May', 'June', 'July', 'August', 'September'
 ];
 
-const CHART_HEIGHT = 350;
+const CHART_HEIGHT = 380;
 
-export function GlastaDiagram({ 
-  result, 
-  climateData,
-  className, 
+// ─── Core calculation ─────────────────────────────────────────────────────────
+
+/**
+ * Build Glaser diagram data for a specific month.
+ *
+ * Strategy (ISO 13788 Glaser method visual):
+ *  • Compute the STRAIGHT-LINE Pv gradient from pInternal → pExternal
+ *    proportional to cumulative Sd at each interface.
+ *  • Compute Psat at each interface from the temperature gradient.
+ *  • Plot BOTH lines as-is — the red Pv line will naturally cross/exceed the
+ *    blue Psat curve at interfaces where condensation occurs.
+ *  • Mark those crossing interfaces with a condensation indicator.
+ *
+ * This approach guarantees visual intersection whenever condensation is predicted.
+ */
+function buildGlaserChartData(
+  result: AnalysisResult,
+  climateData: ClimateData[],
+  displayMonth: string
+): ChartPoint[] {
+  const layers = result.construction.layers;
+
+  // Find climate for this month
+  const climate = climateData.find(c => c.month === displayMonth) ?? {
+    internalTemp: 20,
+    externalTemp: 5,
+    internalRH: 60,
+    externalRH: 85,
+  };
+
+  const pInternal = calculateVapourPressure(climate.internalTemp, climate.internalRH);
+  const pExternal = calculateVapourPressure(climate.externalTemp, climate.externalRH);
+
+  // Build interface list: position (mm) and cumulative Sd (m)
+  const interfaces: { position: number; sd: number }[] = [{ position: 0, sd: 0 }];
+  let cumPos = 0;
+  let cumSd = 0;
+  for (const layer of layers) {
+    cumPos += layer.thickness;
+    cumSd += calculateSd(layer);
+    interfaces.push({ position: cumPos, sd: cumSd });
+  }
+  const totalSd = cumSd;
+
+  // Temperature at each interface
+  const tempGrad = calculateTemperatureGradient(
+    result.construction,
+    climate.internalTemp,
+    climate.externalTemp
+  );
+
+  const points: ChartPoint[] = [];
+
+  for (let i = 0; i < interfaces.length; i++) {
+    const iface = interfaces[i];
+    const temp = tempGrad[i]?.temperature ?? climate.externalTemp;
+    const psat = calculateSaturationPressure(temp);
+
+    // Linear Pv gradient based on Sd fraction — NOT capped
+    const sdFraction = totalSd > 0 ? iface.sd / totalSd : i / (interfaces.length - 1);
+    const pv = pInternal - (pInternal - pExternal) * sdFraction;
+
+    points.push({
+      position: iface.position,
+      sd: Math.round(iface.sd * 1000) / 1000,
+      pv: Math.round(pv),
+      psat: Math.round(psat),
+      temperature: Math.round(temp * 10) / 10,
+      // Condensation interface: Pv exceeds Psat at an internal interface (not surfaces)
+      isCondensationInterface: i > 0 && i < interfaces.length - 1 && pv > psat,
+    });
+  }
+
+  return points;
+}
+
+function findWorstMonth(result: AnalysisResult): string {
+  let worst = 'January';
+  let maxCond = 0;
+  for (const d of result.monthlyData) {
+    if (d.condensationAmount > maxCond) {
+      maxCond = d.condensationAmount;
+      worst = d.month;
+    }
+  }
+  return maxCond === 0 ? 'January' : worst;
+}
+
+// ─── Custom Tooltip ───────────────────────────────────────────────────────────
+
+function GlaserTooltip({ active, payload, label }: any) {
+  if (!active || !payload?.length) return null;
+  return (
+    <div className="bg-card border border-border rounded-lg p-3 shadow-lg text-sm">
+      <p className="text-xs text-muted-foreground mb-1">Position: {label} mm</p>
+      {payload.map((entry: any, i: number) => (
+        <div key={i} className="flex items-center gap-2">
+          <div className="w-2 h-2 rounded-full" style={{ backgroundColor: entry.color }} />
+          <span className="text-muted-foreground">{entry.name}:</span>
+          <span className="font-mono">
+            {entry.value}{entry.dataKey === 'temperature' ? ' °C' : ' Pa'}
+          </span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// ─── Main Component ───────────────────────────────────────────────────────────
+
+export function GlastaDiagram({
+  result,
+  climateData = [],
+  className,
   showMonthSelector = true,
   selectedMonth,
   onMonthChange,
   xAxisMode: externalXAxisMode,
-  onXAxisModeChange
+  onXAxisModeChange,
 }: GlastaDiagramProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [chartWidth, setChartWidth] = useState(0);
   const [isReady, setIsReady] = useState(false);
-  const [internalSelectedMonth, setInternalSelectedMonth] = useState<string>('worst');
+  const [internalMonth, setInternalMonth] = useState<string>('worst');
   const [internalXAxisMode, setInternalXAxisMode] = useState<'thickness' | 'sd'>('thickness');
-  
-  const currentMonth = selectedMonth ?? internalSelectedMonth;
-  const handleMonthChange = onMonthChange ?? setInternalSelectedMonth;
+
+  const currentMonth = selectedMonth ?? internalMonth;
+  const handleMonthChange = onMonthChange ?? setInternalMonth;
   const xAxisMode = externalXAxisMode ?? internalXAxisMode;
   const handleXAxisModeChange = onXAxisModeChange ?? setInternalXAxisMode;
 
-  // Robust dimension measurement with requestAnimationFrame
+  // Measure container width
   useEffect(() => {
     let rafId: number;
-    let resizeObserver: ResizeObserver | null = null;
-    
     const measure = () => {
-      const container = containerRef.current;
-      if (!container) return;
-      
-      const rect = container.getBoundingClientRect();
-      if (rect.width > 50) {
-        setChartWidth(Math.floor(rect.width));
-        setIsReady(true);
-      }
+      const el = containerRef.current;
+      if (!el) return;
+      const w = el.getBoundingClientRect().width;
+      if (w > 100) { setChartWidth(Math.floor(w)); setIsReady(true); }
     };
+    rafId = requestAnimationFrame(() => requestAnimationFrame(measure));
 
-    // Initial measurement after paint
-    rafId = requestAnimationFrame(() => {
-      requestAnimationFrame(measure);
+    const ro = new ResizeObserver(entries => {
+      const w = entries[0]?.contentRect.width ?? 0;
+      if (w > 100) setChartWidth(Math.floor(w));
     });
+    if (containerRef.current) ro.observe(containerRef.current);
 
-    // ResizeObserver for subsequent changes
-    const container = containerRef.current;
-    if (container) {
-      resizeObserver = new ResizeObserver((entries) => {
-        for (const entry of entries) {
-          const width = entry.contentRect.width;
-          if (width > 50) {
-            setChartWidth(Math.floor(width));
-          }
-        }
-      });
-      resizeObserver.observe(container);
-    }
-
-    return () => {
-      cancelAnimationFrame(rafId);
-      resizeObserver?.disconnect();
-    };
+    return () => { cancelAnimationFrame(rafId); ro.disconnect(); };
   }, []);
 
-  // Find the worst month based on HIGHEST MONTHLY CONDENSATION (per ISO 13788)
-  // This should be the month where the most condensation occurs (g/m²)
-  const worstMonth = useMemo(() => {
-    let worstMonthName = 'January';
-    let maxCondensation = 0;
-    
-    // Find the month with highest condensation by matching month names
-    result.monthlyData.forEach((data) => {
-      // Only consider months with actual condensation (not evaporation)
-      if (data.condensationAmount > maxCondensation) {
-        maxCondensation = data.condensationAmount;
-        worstMonthName = data.month;
-      }
-    });
-    
-    // If no condensation in any month, default to January (coldest typical UK month)
-    if (maxCondensation === 0) {
-      return 'January';
-    }
-    
-    return worstMonthName;
-  }, [result.monthlyData]);
-
+  const worstMonth = useMemo(() => findWorstMonth(result), [result]);
   const displayMonth = currentMonth === 'worst' ? worstMonth : currentMonth;
 
-  // Calculate layer boundary positions (for condensation markers)
-  const layerBoundaryPositions = useMemo(() => {
-    const boundaries: number[] = [0]; // Internal surface at position 0
-    let pos = 0;
-    for (const layer of result.construction.layers) {
-      pos += layer.thickness;
-      boundaries.push(pos); // Each layer boundary
-    }
-    return boundaries;
-  }, [result.construction.layers]);
+  const chartData = useMemo(
+    () => buildGlaserChartData(result, climateData, displayMonth),
+    [result, climateData, displayMonth]
+  );
 
-  // CRITICAL: Recalculate vapour pressure gradient for the SELECTED month
-  // This ensures the Glaser diagram updates based on the month's climate data
-  const monthSpecificGradient = useMemo(() => {
-    // Find the climate data for this month by matching the month NAME, not index
-    // because climateData might be in Oct-Sep order (reordered) or Jan-Dec order
-    const monthClimate = climateData?.find(c => c.month === displayMonth);
-    
-    if (!monthClimate) {
-      // Fallback to result's pre-calculated gradient if no climate data
-      console.warn(`[Glaser] No climate data found for ${displayMonth}, using pre-calculated gradient`);
-      return result.vapourPressureGradient;
-    }
-    
-    console.log(`[Glaser ${displayMonth}] Climate: Int=${monthClimate.internalTemp}°C/${monthClimate.internalRH}%, Ext=${monthClimate.externalTemp}°C/${monthClimate.externalRH}%`);
-    
-    // Recalculate the vapour pressure gradient for this specific month
-    return calculateVapourPressureGradient(
-      result.construction,
-      monthClimate.internalTemp,
-      monthClimate.internalRH,
-      monthClimate.externalTemp,
-      monthClimate.externalRH
-    );
-  }, [result.construction, displayMonth, climateData, result.vapourPressureGradient]);
+  const condensationCount = chartData.filter(p => p.isCondensationInterface).length;
 
-  // Check if condensation occurs this month (any uncapped Pv > Psat)
-  const hasCondensationThisMonth = useMemo(() => {
-    return monthSpecificGradient.some(point => (point as any).isCondensationInterface === true);
-  }, [monthSpecificGradient]);
-
-  // Build chart data with temperature line and S_d values
-  // ISO 13788: Show UNCAPPED Pv line to visually display where it crosses Psat
-  // The condensation point is where uncapped line exceeds saturation
-  // ISO 13788 Glaser Diagram: The chart MUST show the theoretical linear Pv gradient
-  // crossing ABOVE Psat when condensation occurs. This is the visual proof of condensation risk.
-  const chartData = useMemo(() => {
-    const data: any[] = [];
-    
-    // Find the climate data for this month by matching the month NAME
-    const monthClimate = climateData?.find(c => c.month === displayMonth) || {
-      internalTemp: 20,
-      externalTemp: 5,
-      internalRH: 60,
-      externalRH: 85
-    };
-
-    // Recalculate temperature gradient for the selected month
-    const tempGradient = calculateTemperatureGradient(
-      result.construction,
-      monthClimate.internalTemp,
-      monthClimate.externalTemp
-    );
-
-    let cumulativeSd = 0;
-    
-    // DEBUG: Log the pressure values to verify intersection
-    console.log(`[Glaser ${displayMonth}] Checking pressure intersections:`);
-    
-    for (let i = 0; i < monthSpecificGradient.length; i++) {
-      const point = monthSpecificGradient[i];
-      
-      // Calculate S_d for x-axis (cumulative through layers)
-      if (i > 0 && i - 1 < result.construction.layers.length) {
-        const layer = result.construction.layers[i - 1];
-        cumulativeSd += calculateSd(layer);
-      }
-      
-      // Get temperature at this position from recalculated gradient
-      const temperature = tempGradient[i]?.temperature ?? 0;
-
-      // Check if this is a condensation interface
-      const isCondensationInterface = (point as any).isCondensationInterface || false;
-      
-      // Ensure condensation is only marked at exact layer boundaries
-      const isAtBoundary = layerBoundaryPositions.some(bp => Math.abs(bp - point.position) < 0.1);
-      
-      // CRITICAL: Use the TRUE uncapped linear gradient pressure
-      // This is the theoretical Pv line that must cross Psat when condensation occurs
-      const uncappedPressure = (point as any).uncappedPressure ?? point.pressure;
-      const saturationPressure = point.saturation;
-      
-      // Log where condensation should occur
-      if (uncappedPressure > saturationPressure) {
-        console.log(`  [Interface ${i}] Pv=${uncappedPressure}Pa > Psat=${saturationPressure}Pa at ${point.position}mm - CONDENSATION`);
-      }
-      
-      data.push({
-        position: point.position,
-        sd: Math.round(cumulativeSd * 100) / 100, // S_d in metres
-        // CRITICAL: Plot the UNCAPPED theoretical linear gradient
-        // This MUST exceed Psat at condensation interfaces
-        vapourPressure: Math.round(uncappedPressure),
-        saturationPressure: Math.round(saturationPressure),
-        temperature: Math.round(temperature * 10) / 10,
-        // Mark condensation interface ONLY at layer boundaries where P_v exceeds P_sat
-        isCondensationInterface: isCondensationInterface && isAtBoundary,
-        // Flag for condensation zone styling
-        hasCondensation: uncappedPressure > saturationPressure,
-      });
-    }
-    
-    // Verify that if condensation is marked, Pv > Psat at that point
-    const condensationPoints = data.filter(d => d.isCondensationInterface);
-    if (condensationPoints.length > 0) {
-      console.log(`[Glaser ${displayMonth}] Condensation interfaces:`, condensationPoints.map(p => 
-        `pos=${p.position}mm, Pv=${p.vapourPressure}Pa, Psat=${p.saturationPressure}Pa, exceeds=${p.vapourPressure > p.saturationPressure}`
-      ));
-    }
-
-    return data;
-  }, [monthSpecificGradient, displayMonth, climateData, result.construction, layerBoundaryPositions]);
-
-  // Find condensation interfaces (where P_v touches P_sat per tangent construction)
-  // ISO 13788: Condensation only occurs at specific material interfaces (layer boundaries)
-  const condensationInterfaces = useMemo(() => {
-    const interfaces: { position: number; layerIndex: number }[] = [];
-
-    for (let i = 0; i < monthSpecificGradient.length; i++) {
-      const point = monthSpecificGradient[i];
-      // Check if this is marked as a condensation interface AND is at a layer boundary
-      const isAtBoundary = layerBoundaryPositions.some(bp => Math.abs(bp - point.position) < 0.1);
-      if ((point as any).isCondensationInterface && isAtBoundary) {
-        interfaces.push({ 
-          position: point.position,
-          layerIndex: i 
-        });
-      }
-    }
-
-    return interfaces;
-  }, [monthSpecificGradient, layerBoundaryPositions]);
-
-  // Layer boundaries for reference lines
+  // Layer boundaries for vertical reference lines (position in mm or Sd)
   const layerBoundaries = useMemo(() => {
-    const boundaries: { position: number; name: string }[] = [];
-    let pos = 0;
-    
+    const out: { pos: number; sd: number; name: string }[] = [];
+    let pos = 0; let sd = 0;
     result.construction.layers.forEach((layer, idx) => {
-      if (idx > 0) {
-        boundaries.push({ position: pos, name: layer.material.name });
-      }
+      if (idx > 0) out.push({ pos, sd: Math.round(sd * 1000) / 1000, name: layer.material.name });
       pos += layer.thickness;
+      sd += calculateSd(layer);
     });
-    
-    return boundaries;
+    return out;
   }, [result.construction.layers]);
 
-  const CustomTooltip = ({ active, payload, label }: any) => {
-    if (!active || !payload) return null;
-
-    return (
-      <div className="bg-card border border-border rounded-lg p-3 shadow-lg">
-        <p className="text-xs text-muted-foreground mb-2">Position: {label}mm</p>
-        {payload.map((entry: any, index: number) => (
-          <div key={index} className="flex items-center gap-2 text-sm">
-            <div 
-              className="w-2 h-2 rounded-full" 
-              style={{ backgroundColor: entry.color }}
-            />
-            <span className="text-muted-foreground">{entry.name}:</span>
-            <span className="font-mono">
-              {entry.value} {entry.dataKey === 'temperature' ? '°C' : 'Pa'}
-            </span>
-          </div>
-        ))}
-      </div>
-    );
-  };
+  const xKey = xAxisMode === 'sd' ? 'sd' : 'position';
+  const xLabel = xAxisMode === 'sd' ? 'Equivalent Air Layer Thickness Sd (m)' : 'Position (mm)';
 
   return (
-    <div className={cn("panel", className)}>
+    <div className={cn('panel', className)}>
       <div className="panel-header">
-        <span className="panel-title">Glaser Diagram - {displayMonth}</span>
-        <div className="flex items-center gap-2">
-          {condensationInterfaces.length > 0 && (
+        <span className="panel-title">Glaser Diagram — {displayMonth}</span>
+        <div className="flex items-center gap-2 flex-wrap">
+          {condensationCount > 0 && (
             <span className="text-xs px-2 py-1 rounded bg-destructive/20 text-destructive">
-              {condensationInterfaces.length} condensation interface{condensationInterfaces.length > 1 ? 's' : ''}
+              {condensationCount} condensation interface{condensationCount > 1 ? 's' : ''}
             </span>
           )}
-          {/* X-axis mode toggle */}
-          <Select value={xAxisMode} onValueChange={(v) => handleXAxisModeChange(v as 'thickness' | 'sd')}>
-            <SelectTrigger className="w-28 h-8 text-xs">
-              <SelectValue />
-            </SelectTrigger>
+          <Select value={xAxisMode} onValueChange={v => handleXAxisModeChange(v as 'thickness' | 'sd')}>
+            <SelectTrigger className="w-28 h-8 text-xs"><SelectValue /></SelectTrigger>
             <SelectContent>
               <SelectItem value="thickness">mm</SelectItem>
               <SelectItem value="sd">Sd (m)</SelectItem>
@@ -313,75 +236,78 @@ export function GlastaDiagram({
           </Select>
           {showMonthSelector && (
             <Select value={currentMonth} onValueChange={handleMonthChange}>
-              <SelectTrigger className="w-32 h-8 text-xs">
-                <SelectValue />
-              </SelectTrigger>
+              <SelectTrigger className="w-32 h-8 text-xs"><SelectValue /></SelectTrigger>
               <SelectContent>
                 <SelectItem value="worst">Worst Month</SelectItem>
-                {months.map(month => (
-                  <SelectItem key={month} value={month}>{month}</SelectItem>
-                ))}
+                {MONTHS.map(m => <SelectItem key={m} value={m}>{m}</SelectItem>)}
               </SelectContent>
             </Select>
           )}
         </div>
       </div>
-      
+
       <div className="p-4">
-        <div 
-          ref={containerRef} 
-          style={{ 
-            width: '100%', 
-            height: CHART_HEIGHT,
-            minWidth: 300,
-            display: 'block',
-            position: 'relative'
-          }}
+        <div
+          ref={containerRef}
+          style={{ width: '100%', height: CHART_HEIGHT, minWidth: 300, position: 'relative' }}
         >
-          {isReady && chartWidth > 50 ? (
-            <ComposedChart 
-              data={chartData} 
-              width={chartWidth} 
+          {isReady && chartWidth > 100 ? (
+            <ComposedChart
+              data={chartData}
+              width={chartWidth}
               height={CHART_HEIGHT}
-              margin={{ top: 20, right: 60, left: 20, bottom: 30 }}
+              margin={{ top: 20, right: 70, left: 20, bottom: 40 }}
             >
               <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
-              
-              {/* Layer boundary reference lines */}
-              {layerBoundaries.map((boundary, idx) => (
-                <ReferenceLine 
-                  key={idx}
-                  x={boundary.position}
+
+              {/* Layer boundary vertical lines */}
+              {layerBoundaries.map((b, i) => (
+                <ReferenceLine
+                  key={i}
+                  x={xAxisMode === 'sd' ? b.sd : b.pos}
                   yAxisId="pressure"
                   stroke="hsl(var(--muted-foreground))"
-                  strokeDasharray="5 5"
+                  strokeDasharray="4 4"
                   strokeWidth={1}
                 />
               ))}
 
-              <XAxis 
-                dataKey={xAxisMode === 'sd' ? 'sd' : 'position'} 
+              {/* Condensation interface vertical lines (red solid) */}
+              {chartData.filter(p => p.isCondensationInterface).map((p, i) => (
+                <ReferenceLine
+                  key={`cond-${i}`}
+                  x={xAxisMode === 'sd' ? p.sd : p.position}
+                  yAxisId="pressure"
+                  stroke="#ef4444"
+                  strokeWidth={2}
+                  label={{
+                    value: '▼ condensation',
+                    position: 'top',
+                    fill: '#ef4444',
+                    fontSize: 10,
+                  }}
+                />
+              ))}
+
+              <XAxis
+                dataKey={xKey}
                 stroke="hsl(var(--muted-foreground))"
                 tick={{ fontSize: 11 }}
-                label={{ 
-                  value: xAxisMode === 'sd' ? 'Equivalent Air Layer Thickness Sd (m)' : 'Position (mm)', 
-                  position: 'bottom', 
-                  offset: 10, 
-                  fill: 'hsl(var(--muted-foreground))', 
-                  fontSize: 11 
-                }}
+                type="number"
+                domain={['dataMin', 'dataMax']}
+                label={{ value: xLabel, position: 'bottom', offset: 20, fill: 'hsl(var(--muted-foreground))', fontSize: 11 }}
               />
-              
-              {/* Left Y-axis for Pressure */}
-              <YAxis 
+
+              {/* Left Y-axis: Pressure */}
+              <YAxis
                 yAxisId="pressure"
                 stroke="hsl(var(--muted-foreground))"
                 tick={{ fontSize: 11 }}
                 label={{ value: 'Pressure (Pa)', angle: -90, position: 'insideLeft', fill: 'hsl(var(--muted-foreground))', fontSize: 11 }}
               />
-              
-              {/* Right Y-axis for Temperature */}
-              <YAxis 
+
+              {/* Right Y-axis: Temperature */}
+              <YAxis
                 yAxisId="temperature"
                 orientation="right"
                 stroke="#22c55e"
@@ -389,11 +315,11 @@ export function GlastaDiagram({
                 label={{ value: 'Temperature (°C)', angle: 90, position: 'insideRight', fill: '#22c55e', fontSize: 11 }}
                 domain={['auto', 'auto']}
               />
-              
-              <Tooltip content={<CustomTooltip />} />
-              <Legend wrapperStyle={{ fontSize: '12px', paddingTop: '10px' }} />
-              
-              {/* Temperature line (green) - linear for gradient visualization */}
+
+              <Tooltip content={<GlaserTooltip />} />
+              <Legend wrapperStyle={{ fontSize: '12px', paddingTop: '8px' }} />
+
+              {/* Temperature — green */}
               <Line
                 yAxisId="temperature"
                 type="linear"
@@ -402,92 +328,94 @@ export function GlastaDiagram({
                 stroke="#22c55e"
                 strokeWidth={2}
                 dot={{ fill: '#22c55e', r: 3 }}
-              />
-              
-              {/* Saturation pressure line (blue) - linear for smooth curve */}
-              <Line
-                yAxisId="pressure"
-                type="linear"
-                dataKey="saturationPressure"
-                name="Saturated VP (Pa)"
-                stroke="#3b82f6"
-                strokeWidth={2}
-                dot={{ fill: '#3b82f6', r: 3 }}
-              />
-              
-              {/* Actual vapour pressure line (red) - linear to show intersection with Psat */}
-              <Line
-                yAxisId="pressure"
-                type="linear"
-                dataKey="vapourPressure"
-                name="Partial VP (Pa)"
-                stroke="#ef4444"
-                strokeWidth={2}
-                dot={{ fill: '#ef4444', r: 3 }}
+                activeDot={{ r: 5 }}
               />
 
-              {/* ISO 13788: Condensation interface markers at specific layer boundaries */}
-              {/* P_v never exceeds P_sat with tangent construction - mark where they touch */}
-              {chartData.map((point, idx) => 
-                point.isCondensationInterface ? (
-                  <ReferenceLine
-                    key={`cond-marker-${idx}`}
-                    x={xAxisMode === 'sd' ? point.sd : point.position}
-                    yAxisId="pressure"
-                    stroke="#ef4444"
-                    strokeWidth={2}
-                    strokeDasharray="none"
-                    label={{
-                      value: '●',
-                      position: 'center',
-                      fill: '#ef4444',
-                      fontSize: 18,
-                    }}
-                  />
-                ) : null
-              )}
+              {/* Saturation pressure — blue */}
+              <Line
+                yAxisId="pressure"
+                type="linear"
+                dataKey="psat"
+                name="Psat — Saturated VP (Pa)"
+                stroke="#3b82f6"
+                strokeWidth={2.5}
+                dot={{ fill: '#3b82f6', r: 3 }}
+                activeDot={{ r: 5 }}
+              />
+
+              {/* Partial vapour pressure — red (UNCAPPED, will cross Psat when condensation) */}
+              <Line
+                yAxisId="pressure"
+                type="linear"
+                dataKey="pv"
+                name="Pv — Partial VP (Pa)"
+                stroke="#ef4444"
+                strokeWidth={2.5}
+                dot={(props: any) => {
+                  const { cx, cy, payload } = props;
+                  if (payload?.isCondensationInterface) {
+                    // Filled red circle with black ring at condensation interface
+                    return (
+                      <circle key={`dot-cond-${cx}`} cx={cx} cy={cy} r={7} fill="#ef4444" stroke="#000" strokeWidth={2} />
+                    );
+                  }
+                  return <circle key={`dot-${cx}`} cx={cx} cy={cy} r={3} fill="#ef4444" />;
+                }}
+                activeDot={{ r: 5 }}
+              />
             </ComposedChart>
           ) : (
             <div className="flex items-center justify-center h-full">
-              <span className="text-muted-foreground text-sm">Loading chart...</span>
+              <span className="text-muted-foreground text-sm">Loading chart…</span>
             </div>
           )}
         </div>
 
-        {/* Layer labels below chart */}
-        <div className="mt-2 flex items-center gap-1 text-xs text-muted-foreground overflow-x-auto">
+        {/* Layer labels */}
+        <div className="mt-1 flex items-center gap-1 text-xs text-muted-foreground overflow-x-auto">
           {result.construction.layers.map((layer, idx) => (
             <div key={idx} className="flex items-center">
-              {idx > 0 && <span className="mx-1">|</span>}
-              <span className="whitespace-nowrap">{layer.material.name.split(' ').slice(0, 2).join(' ')}</span>
+              {idx > 0 && <span className="mx-1 text-muted-foreground/40">|</span>}
+              <span className="whitespace-nowrap">{layer.material.name.split(' ').slice(0, 3).join(' ')}</span>
             </div>
           ))}
         </div>
 
-        <div className="mt-4 flex items-center gap-6 text-xs flex-wrap">
+        {/* Legend */}
+        <div className="mt-3 flex items-center gap-6 text-xs flex-wrap">
           <div className="flex items-center gap-2">
             <div className="w-4 h-0.5 bg-[#22c55e]" />
             <span className="text-muted-foreground">Temperature (°C)</span>
           </div>
           <div className="flex items-center gap-2">
             <div className="w-4 h-0.5 bg-[#ef4444]" />
-            <span className="text-muted-foreground">Partial Vapour Pressure (Pa)</span>
+            <span className="text-muted-foreground">Partial VP Pv (Pa)</span>
           </div>
           <div className="flex items-center gap-2">
             <div className="w-4 h-0.5 bg-[#3b82f6]" />
-            <span className="text-muted-foreground">Saturated Vapour Pressure (Pa)</span>
+            <span className="text-muted-foreground">Saturated VP Psat (Pa)</span>
           </div>
-          {condensationInterfaces.length > 0 && (
+          {condensationCount > 0 && (
             <div className="flex items-center gap-2">
               <div className="w-3 h-3 rounded-full bg-destructive border-2 border-black" />
-              <span className="text-muted-foreground">Condensation interface</span>
+              <span className="text-muted-foreground">Condensation interface (Pv &gt; Psat)</span>
             </div>
           )}
         </div>
+
+        {/* Condensation info */}
+        {condensationCount > 0 && (
+          <div className="mt-3 p-2 rounded bg-destructive/10 border border-destructive/20 text-xs text-destructive">
+            ⚠ Interstitial condensation predicted for <strong>{displayMonth}</strong>:
+            the red Pv line exceeds the blue Psat curve at {condensationCount} interface{condensationCount > 1 ? 's' : ''}.
+          </div>
+        )}
       </div>
     </div>
   );
 }
+
+// ─── Temperature Profile (unchanged) ─────────────────────────────────────────
 
 interface TemperatureProfileProps {
   result: AnalysisResult;
@@ -503,119 +431,61 @@ export function TemperatureProfile({ result, className }: TemperatureProfileProp
 
   useEffect(() => {
     let rafId: number;
-    let resizeObserver: ResizeObserver | null = null;
-    
     const measure = () => {
-      const container = containerRef.current;
-      if (!container) return;
-      
-      const rect = container.getBoundingClientRect();
-      if (rect.width > 50) {
-        setChartWidth(Math.floor(rect.width));
-        setIsReady(true);
-      }
+      const el = containerRef.current;
+      if (!el) return;
+      const w = el.getBoundingClientRect().width;
+      if (w > 50) { setChartWidth(Math.floor(w)); setIsReady(true); }
     };
-
-    rafId = requestAnimationFrame(() => {
-      requestAnimationFrame(measure);
+    rafId = requestAnimationFrame(() => requestAnimationFrame(measure));
+    const ro = new ResizeObserver(entries => {
+      const w = entries[0]?.contentRect.width ?? 0;
+      if (w > 50) setChartWidth(Math.floor(w));
     });
-
-    const container = containerRef.current;
-    if (container) {
-      resizeObserver = new ResizeObserver((entries) => {
-        for (const entry of entries) {
-          const width = entry.contentRect.width;
-          if (width > 50) {
-            setChartWidth(Math.floor(width));
-          }
-        }
-      });
-      resizeObserver.observe(container);
-    }
-
-    return () => {
-      cancelAnimationFrame(rafId);
-      resizeObserver?.disconnect();
-    };
+    if (containerRef.current) ro.observe(containerRef.current);
+    return () => { cancelAnimationFrame(rafId); ro.disconnect(); };
   }, []);
 
-  const chartData = result.temperatureGradient.map(point => ({
-    position: point.position,
-    temperature: Math.round(point.temperature * 10) / 10,
+  const chartData = result.temperatureGradient.map(p => ({
+    position: p.position,
+    temperature: Math.round(p.temperature * 10) / 10,
   }));
 
-  const CustomTooltip = ({ active, payload, label }: any) => {
-    if (!active || !payload) return null;
-
-    return (
-      <div className="bg-card border border-border rounded-lg p-3 shadow-lg">
-        <p className="text-xs text-muted-foreground mb-2">Position: {label}mm</p>
-        <div className="flex items-center gap-2 text-sm">
-          <div className="w-2 h-2 rounded-full bg-chart-4" />
-          <span className="text-muted-foreground">Temperature:</span>
-          <span className="font-mono">{payload[0]?.value}°C</span>
-        </div>
-      </div>
-    );
-  };
-
   return (
-    <div className={cn("panel", className)}>
+    <div className={cn('panel', className)}>
       <div className="panel-header">
         <span className="panel-title">Temperature Profile</span>
       </div>
-      
       <div className="p-4">
-        <div 
-          ref={containerRef} 
-          style={{ 
-            width: '100%', 
-            height: TEMP_CHART_HEIGHT,
-            minWidth: 300,
-            display: 'block',
-            position: 'relative'
-          }}
-        >
+        <div ref={containerRef} style={{ width: '100%', height: TEMP_CHART_HEIGHT, minWidth: 300, position: 'relative' }}>
           {isReady && chartWidth > 50 ? (
-            <LineChart 
-              data={chartData} 
-              width={chartWidth} 
-              height={TEMP_CHART_HEIGHT}
-              margin={{ top: 10, right: 30, left: 10, bottom: 10 }}
-            >
+            <ComposedChart data={chartData} width={chartWidth} height={TEMP_CHART_HEIGHT}
+              margin={{ top: 10, right: 30, left: 10, bottom: 10 }}>
               <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
-              <XAxis 
-                dataKey="position" 
-                stroke="hsl(var(--muted-foreground))"
-                tick={{ fontSize: 11 }}
-              />
-              <YAxis 
+              <XAxis dataKey="position" stroke="hsl(var(--muted-foreground))" tick={{ fontSize: 11 }} />
+              <YAxis
                 stroke="hsl(var(--muted-foreground))"
                 tick={{ fontSize: 11 }}
                 domain={['auto', 'auto']}
                 label={{ value: '°C', angle: -90, position: 'insideLeft', fill: 'hsl(var(--muted-foreground))', fontSize: 11 }}
               />
-              <Tooltip content={<CustomTooltip />} />
-              
-              {/* Temperature gradient with color gradient effect */}
-              <defs>
-                <linearGradient id="tempGradient" x1="0" y1="0" x2="1" y2="0">
-                  <stop offset="0%" stopColor="hsl(var(--chart-5))" />
-                  <stop offset="100%" stopColor="hsl(var(--chart-1))" />
-                </linearGradient>
-              </defs>
-              
-              <Line
-                type="stepAfter"
-                dataKey="temperature"
-                stroke="url(#tempGradient)"
-                strokeWidth={3}
-                dot={{ fill: 'hsl(var(--chart-4))', r: 4, strokeWidth: 2, stroke: 'hsl(var(--background))' }}
+              <Tooltip
+                content={({ active, payload, label }: any) =>
+                  active && payload?.length ? (
+                    <div className="bg-card border border-border rounded-lg p-3 shadow-lg text-sm">
+                      <p className="text-xs text-muted-foreground mb-1">Position: {label} mm</p>
+                      <span className="font-mono">{payload[0]?.value} °C</span>
+                    </div>
+                  ) : null
+                }
               />
-            </LineChart>
+              <Line type="linear" dataKey="temperature" stroke="#22c55e" strokeWidth={3}
+                dot={{ fill: '#22c55e', r: 4, strokeWidth: 2, stroke: 'hsl(var(--background))' }}
+              />
+            </ComposedChart>
           ) : (
             <div className="flex items-center justify-center h-full">
-              <span className="text-muted-foreground text-sm">Loading chart...</span>
+              <span className="text-muted-foreground text-sm">Loading chart…</span>
             </div>
           )}
         </div>
