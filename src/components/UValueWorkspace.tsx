@@ -8,8 +8,10 @@ import { useProjects, BuildupData } from '@/hooks/useProjects';
 import { useAuth } from '@/hooks/useAuth';
 import { Button } from '@/components/ui/button';
 import { useNavigate } from 'react-router-dom';
-import { ArrowLeft, Menu, X, Thermometer, PanelLeftClose, PanelLeft } from 'lucide-react';
+import { ArrowLeft, Menu, X, Thermometer, PanelLeftClose, PanelLeft, FileDown } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { exportUValuePDF } from '@/utils/uValuePdfExport';
+import { toast } from 'sonner';
 
 const defaultConstruction: Construction = {
   id: 'default',
@@ -155,6 +157,32 @@ export default function UValueWorkspace() {
           <span className="text-xs text-muted-foreground">BS EN ISO 6946</span>
         </div>
         <div className="flex-1" />
+        <Button
+          variant="outline"
+          size="sm"
+          className="h-8 text-xs gap-1.5"
+          disabled={construction.layers.length === 0}
+          onClick={() => {
+            const project = projects.find(p => p.id === selectedProjectId);
+            const buildup = project?.buildups.find(b => b.id === selectedBuildupId);
+            exportUValuePDF({
+              construction,
+              constructionType,
+              floorType,
+              perimeter,
+              area,
+              wallThickness,
+              soilConductivity,
+              projectName: project?.name,
+              buildupName: buildup?.name || construction.name,
+            });
+            toast.success('PDF exported');
+          }}
+          title="Export U-value report as PDF"
+        >
+          <FileDown className="w-3.5 h-3.5" />
+          Export PDF
+        </Button>
         <Button
           variant="ghost"
           size="icon"
