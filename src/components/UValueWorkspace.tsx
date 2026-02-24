@@ -199,7 +199,7 @@ export default function UValueWorkspace() {
           {sidebarOpen && (
             <motion.aside
               initial={{ width: 0, opacity: 0 }}
-              animate={{ width: 340, opacity: 1 }}
+              animate={{ width: 420, opacity: 1 }}
               exit={{ width: 0, opacity: 0 }}
               transition={{ duration: 0.25 }}
               className="shrink-0 overflow-hidden border-r border-border bg-card flex flex-col"
